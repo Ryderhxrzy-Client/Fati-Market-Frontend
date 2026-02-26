@@ -47,6 +47,12 @@ import com.example.fati_market_frontend.ui.theme.Gold
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import java.util.concurrent.TimeUnit
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -54,15 +60,21 @@ fun SignUpScreen(navController: NavController) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    var fullName by remember { mutableStateOf("") }
+    var firstName by remember { mutableStateOf("") }
+    var lastName by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var confirmPassword by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
     var confirmPasswordVisible by remember { mutableStateOf(false) }
 
+    var isLoading by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+    var successMessage by remember { mutableStateOf<String?>(null) }
+
     // Profile picture
     var profileBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
+    var profileUri by remember { mutableStateOf<Uri?>(null) }
 
     // Verification
     val verificationOptions = listOf("Student ID", "Registration Card")
@@ -75,6 +87,7 @@ fun SignUpScreen(navController: NavController) {
     val profileLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
+        profileUri = uri
         uri?.let {
             scope.launch(Dispatchers.IO) {
                 val stream = context.contentResolver.openInputStream(it)
@@ -112,7 +125,7 @@ fun SignUpScreen(navController: NavController) {
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
-                    text = "FatiMarket",
+                    text = "Fati-Market ni Ofelia",
                     color = Color.White,
                     fontSize = 28.sp,
                     fontWeight = FontWeight.Bold,
@@ -156,7 +169,6 @@ fun SignUpScreen(navController: NavController) {
                         .padding(bottom = 24.dp)
                         .clickable { profileLauncher.launch("image/*") }
                 ) {
-                    // Circular avatar
                     val bitmap = profileBitmap
                     Box(
                         modifier = Modifier
@@ -204,11 +216,32 @@ fun SignUpScreen(navController: NavController) {
                     }
                 }
 
-                // ── Full Name ────────────────────────────────────────────────────
+                // ── First Name ───────────────────────────────────────────────────
                 OutlinedTextField(
-                    value = fullName,
-                    onValueChange = { fullName = it },
-                    label = { Text("Full Name") },
+                    value = firstName,
+                    onValueChange = { firstName = it },
+                    label = { Text("First Name") },
+                    placeholder = { Text("Juan") },
+                    leadingIcon = {
+                        Icon(
+                            Icons.Filled.Person,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 16.dp),
+                    shape = RoundedCornerShape(12.dp)
+                )
+
+                // ── Last Name ────────────────────────────────────────────────────
+                OutlinedTextField(
+                    value = lastName,
+                    onValueChange = { lastName = it },
+                    label = { Text("Last Name") },
+                    placeholder = { Text("Dela Cruz") },
                     leadingIcon = {
                         Icon(
                             Icons.Filled.Person,
@@ -377,7 +410,6 @@ fun SignUpScreen(navController: NavController) {
                                 onClick = {
                                     selectedVerification = option
                                     verificationExpanded = false
-                                    // Clear previous document when type changes
                                     documentUri = null
                                     documentName = ""
                                 }
@@ -400,7 +432,6 @@ fun SignUpScreen(navController: NavController) {
 
                     val docUri = documentUri
                     if (docUri == null) {
-                        // Upload drop zone
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -445,7 +476,6 @@ fun SignUpScreen(navController: NavController) {
                             }
                         }
                     } else {
-                        // File selected — success state
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -498,21 +528,152 @@ fun SignUpScreen(navController: NavController) {
                     }
                 }
 
+                // ── Success Dialog ────────────────────────────────────────────────
+                successMessage?.let { msg ->
+                    AlertDialog(
+                        onDismissRequest = {
+                            successMessage = null
+                            navController.navigate("login")
+                        },
+                        icon = {
+                            Icon(
+                                imageVector = Icons.Filled.CheckCircle,
+                                contentDescription = null,
+                                tint = DarkGreen,
+                                modifier = Modifier.size(36.dp)
+                            )
+                        },
+                        title = { Text("Registration Successful", fontWeight = FontWeight.Bold) },
+                        text = { Text(msg) },
+                        confirmButton = {
+                            Button(
+                                onClick = {
+                                    successMessage = null
+                                    navController.navigate("login")
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = DarkGreen)
+                            ) {
+                                Text("Go to Login", color = Color.White)
+                            }
+                        }
+                    )
+                }
+
+                // ── Error Message ─────────────────────────────────────────────────
+                errorMessage?.let { msg ->
+                    Text(
+                        text = msg,
+                        color = MaterialTheme.colorScheme.error,
+                        fontSize = 13.sp,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 12.dp)
+                    )
+                }
+
                 // ── Sign Up Button ────────────────────────────────────────────────
                 Button(
-                    onClick = { /* TODO: sign-up logic */ },
+                    onClick = {
+                        scope.launch {
+                            // Validation
+                            if (firstName.isBlank()) {
+                                errorMessage = "First name is required"
+                                return@launch
+                            }
+                            if (lastName.isBlank()) {
+                                errorMessage = "Last name is required"
+                                return@launch
+                            }
+                            if (email.isEmpty()) {
+                                errorMessage = "Email is required"
+                                return@launch
+                            }
+                            if (!email.endsWith("@student.fatima.edu.ph")) {
+                                errorMessage = "Email must end with @student.fatima.edu.ph"
+                                return@launch
+                            }
+                            if (profileUri == null) {
+                                errorMessage = "Please upload a profile photo"
+                                return@launch
+                            }
+                            if (password.isEmpty()) {
+                                errorMessage = "Password is required"
+                                return@launch
+                            }
+                            if (password.length < 8) {
+                                errorMessage = "Password must be at least 8 characters"
+                                return@launch
+                            }
+                            if (password != confirmPassword) {
+                                errorMessage = "Passwords do not match"
+                                return@launch
+                            }
+                            if (selectedVerification.isEmpty()) {
+                                errorMessage = "Please select a verification type"
+                                return@launch
+                            }
+                            if (documentUri == null) {
+                                errorMessage = "Please upload your $selectedVerification"
+                                return@launch
+                            }
+
+                            // Map display label → API value
+                            val verificationUseValue = when (selectedVerification) {
+                                "Student ID" -> "student_id"
+                                "Registration Card" -> "registration_card"
+                                else -> selectedVerification.lowercase().replace(" ", "_")
+                            }
+
+                            errorMessage = null
+                            isLoading = true
+
+                            try {
+                                val (success, message) = withContext(Dispatchers.IO) {
+                                    registerUser(
+                                        context = context,
+                                        firstName = firstName,
+                                        lastName = lastName,
+                                        email = email,
+                                        password = password,
+                                        passwordConfirmation = confirmPassword,
+                                        profilePictureUri = profileUri!!,
+                                        studentIdPhotoUri = documentUri!!,
+                                        verificationUse = verificationUseValue
+                                    )
+                                }
+                                if (success) {
+                                    successMessage = message
+                                } else {
+                                    errorMessage = message
+                                }
+                            } catch (e: Exception) {
+                                errorMessage = "Registration failed: ${e.message}"
+                            } finally {
+                                isLoading = false
+                            }
+                        }
+                    },
+                    enabled = !isLoading,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(52.dp),
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = DarkGreen)
                 ) {
-                    Text(
-                        text = "Create Account",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color.White
-                    )
+                    if (isLoading) {
+                        CircularProgressIndicator(
+                            color = Color.White,
+                            modifier = Modifier.size(22.dp),
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Text(
+                            text = "Create Account",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White
+                        )
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(20.dp))
@@ -543,6 +704,86 @@ fun SignUpScreen(navController: NavController) {
 
         Spacer(modifier = Modifier.height(32.dp))
     }
+}
+
+private val httpClient = OkHttpClient.Builder()
+    .connectTimeout(30, TimeUnit.SECONDS)
+    .readTimeout(30, TimeUnit.SECONDS)
+    .build()
+
+private fun registerUser(
+    context: Context,
+    firstName: String,
+    lastName: String,
+    email: String,
+    password: String,
+    passwordConfirmation: String,
+    profilePictureUri: Uri,
+    studentIdPhotoUri: Uri,
+    verificationUse: String
+): Pair<Boolean, String> {
+    val profileFileName = getFileName(context, profilePictureUri).ifEmpty { "profile.jpg" }
+    val profileMimeType = context.contentResolver.getType(profilePictureUri) ?: "image/jpeg"
+    val profileBytes = context.contentResolver.openInputStream(profilePictureUri)?.readBytes()
+        ?: return Pair(false, "Could not read the profile picture")
+
+    val fileName = getFileName(context, studentIdPhotoUri).ifEmpty { "photo.jpg" }
+    val mimeType = context.contentResolver.getType(studentIdPhotoUri) ?: "image/jpeg"
+    val fileBytes = context.contentResolver.openInputStream(studentIdPhotoUri)?.readBytes()
+        ?: return Pair(false, "Could not read the selected file")
+
+    val requestBody = MultipartBody.Builder()
+        .setType(MultipartBody.FORM)
+        .addFormDataPart("first_name", firstName.trim())
+        .addFormDataPart("last_name", lastName.trim())
+        .addFormDataPart("email", email.trim())
+        .addFormDataPart("password", password)
+        .addFormDataPart("password_confirmation", passwordConfirmation)
+        .addFormDataPart("verification_use", verificationUse)
+        .addFormDataPart(
+            "profile_picture",
+            profileFileName,
+            profileBytes.toRequestBody(profileMimeType.toMediaType())
+        )
+        .addFormDataPart(
+            "student_id_photo",
+            fileName,
+            fileBytes.toRequestBody(mimeType.toMediaType())
+        )
+        .build()
+
+    val request = Request.Builder()
+        .url("https://fati-api.alertaraqc.com/api/register")
+        .header("Accept", "application/json")
+        .header("X-Requested-With", "XMLHttpRequest")
+        .post(requestBody)
+        .build()
+
+    httpClient.newCall(request).execute().use { response ->
+        val body = response.body?.string() ?: ""
+        return if (response.isSuccessful) {
+            val serverMsg = Regex("\"message\"\\s*:\\s*\"([^\"]+)\"").find(body)?.groupValues?.get(1)
+                ?: "Your account has been created and is pending verification."
+            Pair(true, serverMsg)
+        } else {
+            Pair(false, "[HTTP ${response.code}] ${parseErrorMessage(body)}")
+        }
+    }
+}
+
+private fun parseErrorMessage(body: String): String {
+    // Laravel returns validation errors as: {"errors": {"field": ["msg1", "msg2"]}, "message": "..."}
+    val errorsBlock = Regex("\"errors\"\\s*:\\s*\\{(.*?)\\}", RegexOption.DOT_MATCHES_ALL).find(body)
+    if (errorsBlock != null) {
+        val fieldErrors = Regex("\"[^\"]+\"\\s*:\\s*\\[\\s*\"([^\"]+)\"").findAll(errorsBlock.groupValues[1])
+        val messages = fieldErrors.map { it.groupValues[1] }.toList()
+        if (messages.isNotEmpty()) return messages.joinToString("\n")
+    }
+    val msgMatch = Regex("\"message\"\\s*:\\s*\"([^\"]+)\"").find(body)
+    if (msgMatch != null) return msgMatch.groupValues[1]
+    val errMatch = Regex("\"error\"\\s*:\\s*\"([^\"]+)\"").find(body)
+    if (errMatch != null) return errMatch.groupValues[1]
+    return if (body.isNotBlank()) "Server response: $body" else "Registration failed. Please try again."
 }
 
 private fun getFileName(context: Context, uri: Uri): String {
