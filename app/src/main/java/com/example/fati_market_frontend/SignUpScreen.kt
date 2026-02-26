@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import com.example.fati_market_frontend.ui.theme.DarkGreen
 import com.example.fati_market_frontend.ui.theme.DarkGreenLight
+import com.example.fati_market_frontend.ui.theme.DarkText
 import com.example.fati_market_frontend.ui.theme.Gold
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -115,26 +116,51 @@ fun SignUpScreen(navController: NavController) {
             .background(MaterialTheme.colorScheme.background)
             .verticalScroll(rememberScrollState())
     ) {
-        // ── Green Header ───────────────────────────────────────────────────────
+        // ── Header with tab switcher ─────────────────────────────────────────────
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(160.dp)
+                .height(300.dp)
                 .background(headerGradient),
             contentAlignment = Alignment.Center
         ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // Logo — same as login screen
+                Box(
+                    modifier = Modifier
+                        .size(72.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.15f))
+                        .border(2.dp, Gold, CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.ShoppingCart,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(38.dp)
+                    )
+                }
                 Text(
                     text = "Fati-Market ni Ofelia",
                     color = Color.White,
-                    fontSize = 28.sp,
+                    fontSize = 26.sp,
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 1.sp
                 )
                 Text(
                     text = "Create Your Account",
                     color = Color.White.copy(alpha = 0.8f),
-                    fontSize = 14.sp
+                    fontSize = 13.sp
+                )
+                // ── Login / Sign Up tab switcher ──────────────────────────────────
+                AuthTabSwitcher(
+                    isLoginSelected = false,
+                    onLoginClick = { navController.navigate("login") },
+                    onSignUpClick = { /* already here */ }
                 )
             }
         }
@@ -553,7 +579,7 @@ fun SignUpScreen(navController: NavController) {
                                 },
                                 colors = ButtonDefaults.buttonColors(containerColor = DarkGreen)
                             ) {
-                                Text("Go to Login", color = Color.White)
+                                Text("Go to Login", color = Color.White, fontWeight = FontWeight.SemiBold)
                             }
                         }
                     )
@@ -670,35 +696,12 @@ fun SignUpScreen(navController: NavController) {
                         Text(
                             text = "Create Account",
                             fontSize = 16.sp,
-                            fontWeight = FontWeight.SemiBold,
+                            fontWeight = FontWeight.Bold,
                             color = Color.White
                         )
                     }
                 }
 
-                Spacer(modifier = Modifier.height(20.dp))
-
-                // ── Login Link ────────────────────────────────────────────────────
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Already have an account? ",
-                        fontSize = 14.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    ClickableText(
-                        text = AnnotatedString("Login"),
-                        onClick = { navController.navigate("login") },
-                        style = TextStyle(
-                            color = MaterialTheme.colorScheme.primary,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    )
-                }
             }
         }
 

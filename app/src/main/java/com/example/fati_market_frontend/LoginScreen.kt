@@ -2,6 +2,7 @@ package com.example.fati_market_frontend
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -53,10 +54,7 @@ fun LoginScreen(navController: NavController) {
     var successMessage by remember { mutableStateOf<String?>(null) }
 
     val scope = rememberCoroutineScope()
-
-    val headerGradient = Brush.verticalGradient(
-        colors = listOf(DarkGreen, DarkGreenLight)
-    )
+    val headerGradient = Brush.verticalGradient(listOf(DarkGreen, DarkGreenLight))
 
     Column(
         modifier = Modifier
@@ -64,19 +62,22 @@ fun LoginScreen(navController: NavController) {
             .background(MaterialTheme.colorScheme.background)
             .verticalScroll(rememberScrollState())
     ) {
-        // ── Green Header ────────────────────────────────────────────────────────
+        // ── Header with tab switcher ─────────────────────────────────────────────
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(256.dp)
+                .height(300.dp)
                 .background(headerGradient),
             contentAlignment = Alignment.Center
         ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                // Logo circle with gold border
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // Logo
                 Box(
                     modifier = Modifier
-                        .size(84.dp)
+                        .size(72.dp)
                         .clip(CircleShape)
                         .background(Color.White.copy(alpha = 0.15f))
                         .border(2.dp, Gold, CircleShape),
@@ -86,31 +87,36 @@ fun LoginScreen(navController: NavController) {
                         imageVector = Icons.Filled.ShoppingCart,
                         contentDescription = null,
                         tint = Color.White,
-                        modifier = Modifier.size(44.dp)
+                        modifier = Modifier.size(38.dp)
                     )
                 }
-                Spacer(modifier = Modifier.height(14.dp))
                 Text(
-                    text = "FatiMarket",
+                    text = "Fati-Market ni Ofelia",
                     color = Color.White,
-                    fontSize = 30.sp,
+                    fontSize = 26.sp,
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 1.sp
                 )
                 Text(
-                    text = "Your Campus Marketplace",
-                    color = Color.White.copy(alpha = 0.75f),
+                    text = "Login Your Account",
+                    color = Color.White.copy(alpha = 0.8f),
                     fontSize = 13.sp
+                )
+                // ── Login / Sign Up tab switcher ──────────────────────────────────
+                AuthTabSwitcher(
+                    isLoginSelected = true,
+                    onLoginClick = { /* already here */ },
+                    onSignUpClick = { navController.navigate("signup") }
                 )
             }
         }
 
-        // ── Floating Form Card ───────────────────────────────────────────────────
+        // ── Form Card ────────────────────────────────────────────────────────────
         Card(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp)
-                .offset(y = (-30).dp),
+                .offset(y = (-28).dp),
             shape = RoundedCornerShape(20.dp),
             elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
@@ -142,7 +148,7 @@ fun LoginScreen(navController: NavController) {
                         Icon(
                             imageVector = Icons.Filled.Email,
                             contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary
+                            tint = DarkGreen
                         )
                     },
                     singleLine = true,
@@ -162,7 +168,7 @@ fun LoginScreen(navController: NavController) {
                         Icon(
                             imageVector = Icons.Filled.Lock,
                             contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary
+                            tint = DarkGreen
                         )
                     },
                     trailingIcon = {
@@ -170,8 +176,8 @@ fun LoginScreen(navController: NavController) {
                             Icon(
                                 imageVector = if (passwordVisible) Icons.Filled.Visibility
                                 else Icons.Filled.VisibilityOff,
-                                contentDescription = if (passwordVisible) "Hide password"
-                                else "Show password"
+                                contentDescription = null,
+                                tint = DarkGreen
                             )
                         }
                     },
@@ -185,7 +191,7 @@ fun LoginScreen(navController: NavController) {
                     shape = RoundedCornerShape(12.dp)
                 )
 
-                // Forgot Password
+                // Forgot Password link
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -196,9 +202,9 @@ fun LoginScreen(navController: NavController) {
                         text = AnnotatedString("Forgot Password?"),
                         onClick = { navController.navigate("forgot_password") },
                         style = TextStyle(
-                            color = MaterialTheme.colorScheme.primary,
+                            color = DarkGreen,
                             fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium
+                            fontWeight = FontWeight.SemiBold
                         )
                     )
                 }
@@ -232,7 +238,7 @@ fun LoginScreen(navController: NavController) {
                                 },
                                 colors = ButtonDefaults.buttonColors(containerColor = DarkGreen)
                             ) {
-                                Text("Go to Dashboard", color = Color.White)
+                                Text("Go to Dashboard", color = Color.White, fontWeight = FontWeight.SemiBold)
                             }
                         }
                     )
@@ -250,32 +256,19 @@ fun LoginScreen(navController: NavController) {
                     )
                 }
 
-                // Login Button
+                // ── Login Button ──────────────────────────────────────────────────
                 Button(
                     onClick = {
                         scope.launch {
-                            // Validation
-                            if (email.isBlank()) {
-                                errorMessage = "Email is required"
-                                return@launch
-                            }
-                            if (password.isBlank()) {
-                                errorMessage = "Password is required"
-                                return@launch
-                            }
-
+                            if (email.isBlank()) { errorMessage = "Email is required"; return@launch }
+                            if (password.isBlank()) { errorMessage = "Password is required"; return@launch }
                             errorMessage = null
                             isLoading = true
-
                             try {
                                 val (success, message) = withContext(Dispatchers.IO) {
                                     loginUser(email.trim(), password)
                                 }
-                                if (success) {
-                                    successMessage = message
-                                } else {
-                                    errorMessage = message
-                                }
+                                if (success) successMessage = message else errorMessage = message
                             } catch (e: Exception) {
                                 errorMessage = "Login failed: ${e.message}"
                             } finally {
@@ -291,43 +284,10 @@ fun LoginScreen(navController: NavController) {
                     colors = ButtonDefaults.buttonColors(containerColor = DarkGreen)
                 ) {
                     if (isLoading) {
-                        CircularProgressIndicator(
-                            color = Color.White,
-                            modifier = Modifier.size(22.dp),
-                            strokeWidth = 2.dp
-                        )
+                        CircularProgressIndicator(color = Color.White, modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
                     } else {
-                        Text(
-                            text = "Login",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color.White
-                        )
+                        Text("Login", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color.White)
                     }
-                }
-
-                Spacer(modifier = Modifier.height(20.dp))
-
-                // Sign Up link
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Don't have an account? ",
-                        fontSize = 14.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    ClickableText(
-                        text = AnnotatedString("Sign Up"),
-                        onClick = { navController.navigate("signup") },
-                        style = TextStyle(
-                            color = MaterialTheme.colorScheme.primary,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    )
                 }
             }
         }
@@ -335,6 +295,61 @@ fun LoginScreen(navController: NavController) {
         Spacer(modifier = Modifier.height(16.dp))
     }
 }
+
+// ── Shared tab switcher used by both Login and SignUp screens ──────────────────
+
+@Composable
+fun AuthTabSwitcher(
+    isLoginSelected: Boolean,
+    onLoginClick: () -> Unit,
+    onSignUpClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .padding(horizontal = 32.dp)
+            .clip(RoundedCornerShape(50.dp))
+            .background(Color.White.copy(alpha = 0.2f))
+            .padding(4.dp),
+        horizontalArrangement = Arrangement.Center
+    ) {
+        // Login tab
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .clip(RoundedCornerShape(50.dp))
+                .background(if (isLoginSelected) Color.White else Color.Transparent)
+                .clickable { onLoginClick() }
+                .padding(vertical = 10.dp, horizontal = 16.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = "Login",
+                fontSize = 14.sp,
+                fontWeight = if (isLoginSelected) FontWeight.Bold else FontWeight.Normal,
+                color = if (isLoginSelected) DarkGreen else Color.White.copy(alpha = 0.85f)
+            )
+        }
+        // Sign Up tab
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .clip(RoundedCornerShape(50.dp))
+                .background(if (!isLoginSelected) Color.White else Color.Transparent)
+                .clickable { onSignUpClick() }
+                .padding(vertical = 10.dp, horizontal = 16.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = "Sign Up",
+                fontSize = 14.sp,
+                fontWeight = if (!isLoginSelected) FontWeight.Bold else FontWeight.Normal,
+                color = if (!isLoginSelected) DarkGreen else Color.White.copy(alpha = 0.85f)
+            )
+        }
+    }
+}
+
+// ── Network ────────────────────────────────────────────────────────────────────
 
 private val loginHttpClient = OkHttpClient.Builder()
     .connectTimeout(30, TimeUnit.SECONDS)
@@ -354,11 +369,8 @@ private fun loginUser(email: String, password: String): Pair<Boolean, String> {
 
     loginHttpClient.newCall(request).execute().use { response ->
         val body = response.body?.string() ?: ""
-        return if (response.isSuccessful) {
-            Pair(true, "Login successful")
-        } else {
-            Pair(false, parseLoginError(body))
-        }
+        return if (response.isSuccessful) Pair(true, "Login successful")
+        else Pair(false, parseLoginError(body))
     }
 }
 
@@ -371,5 +383,5 @@ private fun parseLoginError(body: String): String {
     }
     val msgMatch = Regex("\"message\"\\s*:\\s*\"([^\"]+)\"").find(body)
     if (msgMatch != null) return msgMatch.groupValues[1]
-    return if (body.isNotBlank()) "Login failed. Please try again." else "Login failed. Please try again."
+    return "Login failed. Please try again."
 }
