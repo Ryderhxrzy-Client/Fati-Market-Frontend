@@ -8,7 +8,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 
 @Composable
-fun AppNavigation() {
+fun AppNavigation(isDarkMode: Boolean, onThemeToggle: () -> Unit) {
     val navController = rememberNavController()
 
     NavHost(
@@ -27,6 +27,12 @@ fun AppNavigation() {
         }
         composable("forgot_password") {
             ForgotPasswordScreen(navController)
+        }
+        composable("admin_home") {
+            AdminDashboard(
+                isDarkMode = isDarkMode,
+                onThemeToggle = onThemeToggle
+            )
         }
     }
 }
