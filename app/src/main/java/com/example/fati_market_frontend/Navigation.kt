@@ -13,15 +13,19 @@ fun AppNavigation(isDarkMode: Boolean, onThemeToggle: () -> Unit) {
 
     NavHost(
         navController = navController,
-        startDestination = "login",
+        startDestination = "splash",
         enterTransition = { EnterTransition.None },
         exitTransition = { ExitTransition.None },
         popEnterTransition = { EnterTransition.None },
         popExitTransition = { ExitTransition.None }
     ) {
-        composable("login") {
-            LoginScreen(navController)
+        composable("splash") {
+            // TODO: change destination to "login" when done debugging
+            SplashScreen(navController, destination = "admin_home")
         }
+//        composable("login") {
+//            LoginScreen(navController)
+//        }
         composable("signup") {
             SignUpScreen(navController)
         }
