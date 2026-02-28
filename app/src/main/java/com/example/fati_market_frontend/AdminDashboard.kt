@@ -4,21 +4,30 @@ import android.content.Context
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import java.io.File
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -28,9 +37,21 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -45,6 +66,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
 import androidx.compose.ui.graphics.graphicsLayer
+import coil.compose.AsyncImage
 import coil.compose.SubcomposeAsyncImage
 import com.example.fati_market_frontend.ui.theme.DarkGreen
 import com.example.fati_market_frontend.ui.theme.DarkGreenLight
@@ -119,8 +141,10 @@ private data class Student(
 // ── Network helpers ────────────────────────────────────────────────────────────
 
 private val adminHttpClient = OkHttpClient.Builder()
-    .connectTimeout(30, TimeUnit.SECONDS)
-    .readTimeout(30, TimeUnit.SECONDS)
+    .connectTimeout(15, TimeUnit.SECONDS)
+    .readTimeout(15, TimeUnit.SECONDS)
+    .writeTimeout(15, TimeUnit.SECONDS)
+    .connectionPool(okhttp3.ConnectionPool(5, 5, TimeUnit.MINUTES))
     .build()
 
 private fun fetchStudents(token: String, status: String? = null): List<Student> {
@@ -169,25 +193,27 @@ private fun updateStudentStatus(
 }
 
 /** Upload the admin's own profile picture. Returns the new picture URL on success, null otherwise. */
-private fun uploadProfilePicture(token: String, file: File): String? {
+private fun uploadProfilePicture(token: String, file: File, mimeType: String = "image/jpeg"): String? {
     val requestBody = MultipartBody.Builder()
         .setType(MultipartBody.FORM)
         .addFormDataPart(
             "profile_picture",
             file.name,
-            file.asRequestBody("image/jpeg".toMediaType())
+            file.asRequestBody(mimeType.toMediaType())
         )
         .build()
 
     val request = Request.Builder()
         .url("https://fati-api.alertaraqc.com/api/profile/picture")
         .header("Authorization", "Bearer $token")
-        .put(requestBody)
+        .header("Accept", "application/json")
+        .post(requestBody)
         .build()
 
     adminHttpClient.newCall(request).execute().use { response ->
+        val body = response.body?.string()
         if (!response.isSuccessful) return null
-        val body = response.body?.string() ?: return null
+        if (body == null) return null
         return try {
             val json = JSONObject(body)
             // Try common response shapes
@@ -195,7 +221,11 @@ private fun uploadProfilePicture(token: String, file: File): String? {
                 ?: json.strOrNull("picture_url")
                 ?: json.strOrNull("url")
                 ?: json.optJSONObject("data")?.strOrNull("profile_picture")
-        } catch (_: Exception) { null }
+                ?: json.optJSONObject("data")?.strOrNull("picture_url")
+                ?: json.optJSONObject("user")?.strOrNull("profile_picture")
+                // If upload succeeded but URL not in response, return empty string so caller knows success
+                ?: ""
+        } catch (_: Exception) { "" }
     }
 }
 
@@ -299,10 +329,11 @@ fun AdminDashboard(isDarkMode: Boolean, onThemeToggle: () -> Unit, onLogout: () 
     val userWalletPoints = remember { prefs.getInt("user_wallet_points", 0) }
     var userProfilePic   by remember { mutableStateOf(prefs.getString("user_profile_picture", "") ?: "") }
 
-    var selectedTab  by remember { mutableStateOf(AdminTab.HOME) }
-    var drawerPage   by remember { mutableStateOf<DrawerPage?>(null) }
-    val drawerState  = rememberDrawerState(DrawerValue.Closed)
-    val scope        = rememberCoroutineScope()
+    var selectedTab       by remember { mutableStateOf(AdminTab.HOME) }
+    var drawerPage        by remember { mutableStateOf<DrawerPage?>(null) }
+    var chatConversation  by remember { mutableStateOf<Conversation?>(null) }
+    val drawerState       = rememberDrawerState(DrawerValue.Closed)
+    val scope             = rememberCoroutineScope()
     val openDrawer: () -> Unit = { scope.launch { drawerState.open() } }
 
     ModalNavigationDrawer(
@@ -336,17 +367,21 @@ fun AdminDashboard(isDarkMode: Boolean, onThemeToggle: () -> Unit, onLogout: () 
             }
         }
     ) {
+        val chatIsOpen = selectedTab == AdminTab.CHAT && chatConversation != null
         Scaffold(
             bottomBar = {
-                AdminBottomBar(
-                    selected       = selectedTab,
-                    userProfilePic = userProfilePic,
-                    userInitial    = userFirstName.firstOrNull()?.uppercaseChar()?.toString() ?: "A",
-                    onSelect       = { tab ->
-                        selectedTab = tab
-                        drawerPage  = null
-                    }
-                )
+                if (!chatIsOpen) {
+                    AdminBottomBar(
+                        selected       = selectedTab,
+                        userProfilePic = userProfilePic,
+                        userInitial    = userFirstName.firstOrNull()?.uppercaseChar()?.toString() ?: "A",
+                        onSelect       = { tab ->
+                            selectedTab      = tab
+                            drawerPage       = null
+                            chatConversation = null
+                        }
+                    )
+                }
             },
             contentWindowInsets = WindowInsets(0),
             containerColor = MaterialTheme.colorScheme.background
@@ -354,14 +389,18 @@ fun AdminDashboard(isDarkMode: Boolean, onThemeToggle: () -> Unit, onLogout: () 
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(bottom = innerPadding.calculateBottomPadding())
+                    .padding(bottom = if (chatIsOpen) 0.dp else innerPadding.calculateBottomPadding())
             ) {
                 if (drawerPage != null) {
                     DrawerPageContent(page = drawerPage!!, onMenuClick = openDrawer)
                 } else {
                     when (selectedTab) {
                         AdminTab.HOME     -> AdminHomeContent(onMenuClick = openDrawer)
-                        AdminTab.CHAT     -> AdminChatContent(onMenuClick = openDrawer)
+                        AdminTab.CHAT     -> AdminChatContent(
+                            onMenuClick          = openDrawer,
+                            selectedConversation = chatConversation,
+                            onSelectConversation = { chatConversation = it }
+                        )
                         AdminTab.USERS    -> AdminUsersContent(onMenuClick = openDrawer)
                         AdminTab.SETTINGS -> AdminSettingsContent(isDarkMode, onThemeToggle, onMenuClick = openDrawer)
                         AdminTab.PROFILE  -> AdminProfileContent(
@@ -641,95 +680,195 @@ private fun AdminBottomBar(
     onSelect: (AdminTab) -> Unit
 ) {
     Box(modifier = Modifier.fillMaxWidth()) {
-        Surface(modifier = Modifier.fillMaxWidth(), tonalElevation = 0.dp,
-            shadowElevation = 16.dp, color = MaterialTheme.colorScheme.surface) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            tonalElevation = 0.dp,
+            shadowElevation = 12.dp,
+            color = MaterialTheme.colorScheme.surface
+        ) {
             Column(modifier = Modifier.fillMaxWidth()) {
-                Row(modifier = Modifier.fillMaxWidth().height(76.dp),
-                    verticalAlignment = Alignment.CenterVertically) {
-                    NavBarItem(Icons.Filled.Home, "Home", selected == AdminTab.HOME, Modifier.weight(1f)) { onSelect(AdminTab.HOME) }
-                    NavBarItem(Icons.Filled.Chat, "Chat", selected == AdminTab.CHAT, Modifier.weight(1f)) { onSelect(AdminTab.CHAT) }
-                    Column(modifier = Modifier.weight(1f).height(76.dp).clickable { onSelect(AdminTab.USERS) },
-                        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Bottom) {
-                        Text("Users", fontSize = 11.sp,
-                            fontWeight = if (selected == AdminTab.USERS) FontWeight.SemiBold else FontWeight.Normal,
-                            color = if (selected == AdminTab.USERS) DarkGreen else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                            modifier = Modifier.padding(bottom = 12.dp))
-                    }
-                    NavBarItem(Icons.Filled.Settings, "Settings", selected == AdminTab.SETTINGS, Modifier.weight(1f)) { onSelect(AdminTab.SETTINGS) }
-                    // Profile tab — same layout as NavBarItem, avatar replaces icon
-                    val isProfileSelected = selected == AdminTab.PROFILE
-                    Column(
-                        modifier = Modifier.weight(1f).padding(vertical = 8.dp)
-                            .clickable { onSelect(AdminTab.PROFILE) },
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        // 44 dp outer box matches NavBarItem so text labels sit at the same height
-                        Box(
-                            modifier = Modifier.size(44.dp).clip(CircleShape),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Box(
-                                modifier = Modifier.size(28.dp).clip(CircleShape)
-                                    .background(
-                                        if (isProfileSelected) DarkGreen
-                                        else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.15f)
-                                    )
-                                    .border(
-                                        width = if (isProfileSelected) 2.dp else 0.dp,
-                                        color = DarkGreen, shape = CircleShape
-                                    ),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                if (userProfilePic.isNotBlank()) {
-                                    SubcomposeAsyncImage(
-                                        model = userProfilePic,
-                                        contentDescription = null,
-                                        modifier = Modifier.fillMaxSize().clip(CircleShape),
-                                        contentScale = ContentScale.Crop,
-                                        error = {
-                                            Text(userInitial, fontSize = 11.sp,
-                                                fontWeight = FontWeight.Bold, color = Color.White)
-                                        }
-                                    )
-                                } else {
-                                    Text(userInitial, fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = if (isProfileSelected) Color.White
-                                                else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
-                                }
-                            }
-                        }
-                        Text("Profile", fontSize = 11.sp,
-                            fontWeight = if (isProfileSelected) FontWeight.SemiBold else FontWeight.Normal,
-                            color = if (isProfileSelected) DarkGreen
-                                    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
-                    }
+                Row(
+                    modifier = Modifier.fillMaxWidth().height(72.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    ModernNavItem(
+                        outlinedIcon = Icons.Outlined.Home,
+                        filledIcon = Icons.Filled.Home,
+                        label = "Home",
+                        selected = selected == AdminTab.HOME,
+                        modifier = Modifier.weight(1f)
+                    ) { onSelect(AdminTab.HOME) }
+                    ModernNavItem(
+                        outlinedIcon = Icons.Outlined.Chat,
+                        filledIcon = Icons.Filled.Chat,
+                        label = "Chat",
+                        selected = selected == AdminTab.CHAT,
+                        modifier = Modifier.weight(1f)
+                    ) { onSelect(AdminTab.CHAT) }
+                    // Spacer for center FAB
+                    Spacer(modifier = Modifier.weight(1f))
+                    ModernNavItem(
+                        outlinedIcon = Icons.Outlined.Settings,
+                        filledIcon = Icons.Filled.Settings,
+                        label = "Settings",
+                        selected = selected == AdminTab.SETTINGS,
+                        modifier = Modifier.weight(1f)
+                    ) { onSelect(AdminTab.SETTINGS) }
+                    ProfileNavItem(
+                        userProfilePic = userProfilePic,
+                        userInitial = userInitial,
+                        selected = selected == AdminTab.PROFILE,
+                        modifier = Modifier.weight(1f)
+                    ) { onSelect(AdminTab.PROFILE) }
                 }
                 Spacer(modifier = Modifier.windowInsetsBottomHeight(WindowInsets.navigationBars))
             }
         }
-        FloatingActionButton(
-            onClick = { onSelect(AdminTab.USERS) },
-            modifier = Modifier.align(Alignment.TopCenter).offset(y = (-28).dp).size(60.dp)
-                .border(4.dp, MaterialTheme.colorScheme.surface, CircleShape),
-            shape = CircleShape, containerColor = DarkGreen, contentColor = Color.White,
-            elevation = FloatingActionButtonDefaults.elevation(defaultElevation = 8.dp, pressedElevation = 12.dp)
-        ) { Icon(Icons.Filled.Group, "Users", modifier = Modifier.size(26.dp)) }
+        // Center FAB — sits above the bar with its label below it
+        Column(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .offset(y = (-16).dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            FloatingActionButton(
+                onClick = { onSelect(AdminTab.USERS) },
+                modifier = Modifier
+                    .size(54.dp)
+                    .border(3.dp, MaterialTheme.colorScheme.surface, CircleShape),
+                shape = CircleShape,
+                containerColor = if (selected == AdminTab.USERS) DarkGreenLight else DarkGreen,
+                contentColor = Color.White,
+                elevation = FloatingActionButtonDefaults.elevation(
+                    defaultElevation = 6.dp, pressedElevation = 10.dp
+                )
+            ) {
+                Icon(Icons.Filled.Group, "Users", modifier = Modifier.size(24.dp))
+            }
+            Text(
+                text = "Users",
+                fontSize = 10.sp,
+                fontWeight = if (selected == AdminTab.USERS) FontWeight.SemiBold else FontWeight.Normal,
+                color = if (selected == AdminTab.USERS) DarkGreen
+                        else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                modifier = Modifier.padding(top = 3.dp)
+            )
+        }
     }
 }
 
 @Composable
-private fun NavBarItem(icon: ImageVector, label: String, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
-    val tint = if (selected) DarkGreen else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-    Column(modifier = modifier.padding(vertical = 8.dp),
-        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-        Box(modifier = Modifier.size(44.dp).clip(CircleShape).clickable(onClick = onClick),
-            contentAlignment = Alignment.Center) {
-            Icon(icon, label, tint = tint, modifier = Modifier.size(28.dp))
+private fun ModernNavItem(
+    outlinedIcon: ImageVector,
+    filledIcon: ImageVector,
+    label: String,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val tint = if (selected) DarkGreen else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+    Column(
+        modifier = modifier
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .background(
+                    color = if (selected) DarkGreen.copy(alpha = 0.12f) else Color.Transparent,
+                    shape = RoundedCornerShape(50)
+                )
+                .padding(horizontal = 16.dp, vertical = 5.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = if (selected) filledIcon else outlinedIcon,
+                contentDescription = label,
+                tint = tint,
+                modifier = Modifier.size(26.dp)
+            )
         }
-        Text(label, fontSize = 11.sp,
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal, color = tint)
+        Text(
+            text = label,
+            fontSize = 10.sp,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+            color = tint,
+            modifier = Modifier.padding(top = 2.dp)
+        )
+    }
+}
+
+@Composable
+private fun ProfileNavItem(
+    userProfilePic: String,
+    userInitial: String,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val tint = if (selected) DarkGreen else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+    Column(
+        modifier = modifier
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .background(
+                    color = if (selected) DarkGreen.copy(alpha = 0.12f) else Color.Transparent,
+                    shape = RoundedCornerShape(50)
+                )
+                .padding(horizontal = 14.dp, vertical = 5.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(26.dp)
+                    .clip(CircleShape)
+                    .border(
+                        width = if (selected) 1.5.dp else 0.dp,
+                        color = DarkGreen,
+                        shape = CircleShape
+                    )
+                    .background(
+                        if (selected) DarkGreen
+                        else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.15f)
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                if (userProfilePic.isNotBlank()) {
+                    SubcomposeAsyncImage(
+                        model = userProfilePic,
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize().clip(CircleShape),
+                        contentScale = ContentScale.Crop,
+                        error = {
+                            Text(userInitial, fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold, color = Color.White)
+                        }
+                    )
+                } else {
+                    Text(
+                        text = userInitial,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (selected) Color.White
+                                else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                    )
+                }
+            }
+        }
+        Text(
+            text = "Profile",
+            fontSize = 10.sp,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+            color = tint,
+            modifier = Modifier.padding(top = 2.dp)
+        )
     }
 }
 
@@ -772,21 +911,873 @@ private fun StatCard(title: String, value: String, icon: ImageVector, modifier: 
     }
 }
 
+// ── Chat data models ────────────────────────────────────────────────────────────
+
+private data class Conversation(
+    val otherUserId: Int,
+    val otherUserEmail: String,
+    val firstName: String,
+    val lastName: String,
+    val profilePicture: String,
+    val itemId: Int,
+    val itemTitle: String,
+    val latestMessage: String,
+    val lastMessageAt: String,
+    val messageCount: Int
+)
+
+private data class ChatMessage(
+    val messageId: Int,
+    val itemId: Int,
+    val itemTitle: String,
+    val senderId: Int,
+    val senderName: String,
+    val senderProfilePicture: String,
+    val receiverId: Int,
+    val receiverName: String,
+    val receiverProfilePicture: String,
+    val message: String,
+    val sentAt: String
+)
+
+// ── Chat API ────────────────────────────────────────────────────────────────────
+
+private fun fetchConversations(token: String): List<Conversation> {
+    val request = Request.Builder()
+        .url("https://fati-api.alertaraqc.com/api/conversations")
+        .header("Authorization", "Bearer $token")
+        .header("Accept", "application/json")
+        .get()
+        .build()
+    return try {
+        adminHttpClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) return emptyList()
+            val body = response.body?.string() ?: return emptyList()
+            val list = mutableListOf<Conversation>()
+            val arr = try { org.json.JSONArray(body) }
+                      catch (_: Exception) { org.json.JSONObject(body).optJSONArray("data") ?: return emptyList() }
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                list.add(Conversation(
+                    otherUserId      = obj.optInt("other_user_id"),
+                    otherUserEmail   = obj.optString("other_user_email"),
+                    firstName        = obj.optString("first_name"),
+                    lastName         = obj.optString("last_name"),
+                    profilePicture   = obj.optString("profile_picture"),
+                    itemId           = obj.optInt("item_id"),
+                    itemTitle        = obj.optString("item_title"),
+                    latestMessage    = obj.optString("latest_message"),
+                    lastMessageAt    = obj.optString("last_message_at"),
+                    messageCount     = obj.optInt("message_count")
+                ))
+            }
+            list
+        }
+    } catch (_: Exception) { emptyList() }
+}
+
+private fun fetchMessages(token: String, itemId: Int): List<ChatMessage> {
+    val request = Request.Builder()
+        .url("https://fati-api.alertaraqc.com/api/messages/$itemId")
+        .header("Authorization", "Bearer $token")
+        .header("Accept", "application/json")
+        .get()
+        .build()
+    return try {
+        adminHttpClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) return emptyList()
+            val body = response.body?.string() ?: return emptyList()
+            val list = mutableListOf<ChatMessage>()
+            val arr = org.json.JSONObject(body).optJSONArray("data") ?: return emptyList()
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                list.add(ChatMessage(
+                    messageId              = obj.optInt("message_id"),
+                    itemId                 = obj.optInt("item_id"),
+                    itemTitle              = obj.optString("item_title"),
+                    senderId               = obj.optInt("sender_id"),
+                    senderName             = obj.optString("sender_name"),
+                    senderProfilePicture   = obj.optString("sender_profile_picture"),
+                    receiverId             = obj.optInt("receiver_id"),
+                    receiverName           = obj.optString("receiver_name"),
+                    receiverProfilePicture = obj.optString("receiver_profile_picture"),
+                    message                = obj.optString("message"),
+                    sentAt                 = obj.optString("sent_at")
+                ))
+            }
+            list
+        }
+    } catch (_: Exception) { emptyList() }
+}
+
+private fun sendMessage(token: String, itemId: Int, receiverId: Int, message: String): Boolean {
+    val json = JSONObject().apply {
+        put("receiver_id", receiverId)
+        put("message", message)
+    }.toString()
+    val request = Request.Builder()
+        .url("https://fati-api.alertaraqc.com/api/messages/$itemId")
+        .header("Authorization", "Bearer $token")
+        .header("Accept", "application/json")
+        .post(json.toRequestBody("application/json".toMediaType()))
+        .build()
+    return try {
+        adminHttpClient.newCall(request).execute().use { it.isSuccessful }
+    } catch (_: Exception) { false }
+}
+
+private data class EmojiItem(
+    val name: String,
+    val category: String,
+    val htmlCode: List<String>
+)
+
+private fun htmlCodeToChar(htmlCode: String): String {
+    val code = htmlCode.removePrefix("&#").removeSuffix(";").toIntOrNull() ?: return ""
+    return runCatching { String(Character.toChars(code)) }.getOrElse { "" }
+}
+
+// Hardcoded categories so we can show tabs instantly without a "fetch all" call.
+// Each maps to the EmojiHub API slug used in /api/all/category/{slug}.
+private val emojiCategories = listOf(
+    "smileys and people"  to "smileys-and-people",
+    "animals and nature"  to "animals-and-nature",
+    "food and drink"      to "food-and-drink",
+    "travel and places"   to "travel-and-places",
+    "activities"          to "activities",
+    "objects"             to "objects",
+    "symbols"             to "symbols",
+    "flags"               to "flags"
+)
+
+// Module-level cache: survives recompositions but is cleared when the process dies.
+private val emojiCache = mutableMapOf<String, List<EmojiItem>>()
+
+private suspend fun fetchEmojisByCategory(slug: String): List<EmojiItem> = withContext(Dispatchers.IO) {
+    emojiCache[slug]?.let { return@withContext it }
+    val request = Request.Builder()
+        .url("https://emojihub.yurace.pro/api/all/category/$slug")
+        .build()
+    val body = adminHttpClient.newCall(request).execute().use { it.body?.string() ?: "[]" }
+    val arr = JSONArray(body)
+    val result = buildList {
+        for (i in 0 until arr.length()) {
+            val obj = arr.getJSONObject(i)
+            val htmlArr = obj.getJSONArray("htmlCode")
+            val codes = buildList { for (j in 0 until htmlArr.length()) add(htmlArr.getString(j)) }
+            add(EmojiItem(obj.optString("name"), obj.optString("category"), codes))
+        }
+    }
+    emojiCache[slug] = result
+    result
+}
+
+private fun timeAgo(dateStr: String): String {
+    return try {
+        val date = if (dateStr.contains("T")) {
+            val cleaned = dateStr.replace(Regex("\\.\\d+Z?$"), "")
+            java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.US)
+                .apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }
+                .parse(cleaned)
+        } else {
+            java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).parse(dateStr)
+        } ?: return dateStr
+        val diff    = System.currentTimeMillis() - date.time
+        val seconds = diff / 1000
+        val minutes = seconds / 60
+        val hours   = minutes / 60
+        val days    = hours / 24
+        when {
+            seconds < 60 -> "just now"
+            minutes < 60 -> "${minutes}m ago"
+            hours   < 24 -> "${hours}h ago"
+            days    < 7  -> "${days}d ago"
+            else         -> java.text.SimpleDateFormat("MMM d", java.util.Locale.US).format(date)
+        }
+    } catch (_: Exception) { dateStr }
+}
+
 // ── Chat ───────────────────────────────────────────────────────────────────────
 
 @Composable
-private fun AdminChatContent(onMenuClick: () -> Unit) {
-    Column(modifier = Modifier.fillMaxSize()) {
-        AdminPageHeader(title = "Messages", onMenuClick = onMenuClick)
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(Icons.Filled.ChatBubbleOutline, null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-                    modifier = Modifier.size(72.dp))
-                Spacer(modifier = Modifier.height(16.dp))
-                Text("No messages yet", fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+private fun AdminChatContent(
+    onMenuClick: () -> Unit,
+    selectedConversation: Conversation?,
+    onSelectConversation: (Conversation?) -> Unit
+) {
+    val context = LocalContext.current
+    val prefs   = remember { context.getSharedPreferences("fatimarket_prefs", Context.MODE_PRIVATE) }
+    val token         = remember { prefs.getString("auth_token", "") ?: "" }
+    val currentUserId = remember { prefs.getInt("user_id", 0) }
+
+    var conversations by remember { mutableStateOf<List<Conversation>>(emptyList()) }
+    var isLoading     by remember { mutableStateOf(true) }
+    var loadError     by remember { mutableStateOf(false) }
+    var searchQuery   by remember { mutableStateOf("") }
+
+    val filteredConversations = remember(conversations, searchQuery) {
+        if (searchQuery.isBlank()) conversations
+        else {
+            val q = searchQuery.trim().lowercase()
+            conversations.filter { c ->
+                c.firstName.lowercase().contains(q) ||
+                c.lastName.lowercase().contains(q) ||
+                c.itemTitle.lowercase().contains(q) ||
+                c.latestMessage.lowercase().contains(q)
             }
         }
+    }
+
+    LaunchedEffect(Unit) {
+        try {
+            val result = withContext(Dispatchers.IO) { fetchConversations(token) }
+            conversations = result
+        } catch (_: Exception) {
+            loadError = true
+        } finally {
+            isLoading = false
+        }
+    }
+
+    AnimatedContent(
+        targetState = selectedConversation,
+        transitionSpec = {
+            if (targetState != null) {
+                // Opening a conversation — slide in from right
+                slideInHorizontally(tween(300)) { it } togetherWith
+                    slideOutHorizontally(tween(300)) { -it / 3 }
+            } else {
+                // Going back — slide in from left
+                slideInHorizontally(tween(300)) { -it / 3 } togetherWith
+                    slideOutHorizontally(tween(300)) { it }
+            }
+        },
+        label = "ChatTransition"
+    ) { conv ->
+    if (conv != null) {
+        ChatDetailContent(
+            conversation  = conv,
+            token         = token,
+            currentUserId = currentUserId,
+            onBack        = { onSelectConversation(null) }
+        )
+    } else {
+        Column(modifier = Modifier.fillMaxSize()) {
+            AdminPageHeader(title = "Messages", onMenuClick = onMenuClick)
+
+            // ── Search bar ────────────────────────────────────────────────────
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 10.dp)
+                    .background(
+                        MaterialTheme.colorScheme.surface,
+                        RoundedCornerShape(24.dp)
+                    )
+                    .border(
+                        1.dp,
+                        MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
+                        RoundedCornerShape(24.dp)
+                    )
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                    Icon(
+                        Icons.Outlined.Search, null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    androidx.compose.foundation.text.BasicTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        modifier = Modifier.weight(1f),
+                        textStyle = TextStyle(
+                            fontSize = 14.sp,
+                            lineHeight = 20.sp,
+                            color = MaterialTheme.colorScheme.onSurface
+                        ),
+                        singleLine = true,
+                        decorationBox = { innerTextField ->
+                            Box(contentAlignment = Alignment.CenterStart) {
+                                if (searchQuery.isEmpty()) {
+                                    Text(
+                                        "Search conversations…",
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                        fontSize = 14.sp,
+                                        lineHeight = 20.sp
+                                    )
+                                }
+                                innerTextField()
+                            }
+                        }
+                    )
+                    if (searchQuery.isNotEmpty()) {
+                        Spacer(Modifier.width(4.dp))
+                        IconButton(
+                            onClick = { searchQuery = "" },
+                            modifier = Modifier.size(20.dp)
+                        ) {
+                            Icon(
+                                Icons.Filled.Close, null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+            }
+
+            when {
+                isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = DarkGreen)
+                }
+                loadError || filteredConversations.isEmpty() -> Box(
+                    Modifier.fillMaxSize(), contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(
+                            Icons.Filled.ChatBubbleOutline, null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                            modifier = Modifier.size(72.dp)
+                        )
+                        Spacer(Modifier.height(16.dp))
+                        Text(
+                            when {
+                                loadError            -> "Failed to load conversations"
+                                searchQuery.isNotEmpty() -> "No results for \"$searchQuery\""
+                                else                 -> "No conversations yet"
+                            },
+                            fontSize = 16.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                else -> LazyColumn(modifier = Modifier.fillMaxSize()) {
+                    items(filteredConversations, key = { "${it.otherUserId}_${it.itemId}" }) { conv ->
+                        ConversationItem(conv) { onSelectConversation(conv) }
+                    }
+                }
+            }
+        }
+    } // end AnimatedContent
+    } // end AnimatedContent lambda
+}
+
+@Composable
+private fun ConversationItem(conversation: Conversation, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Avatar
+        Box(
+            modifier = Modifier.size(52.dp).clip(CircleShape)
+                .background(DarkGreen.copy(alpha = 0.12f)),
+            contentAlignment = Alignment.Center
+        ) {
+            if (conversation.profilePicture.isNotBlank()) {
+                SubcomposeAsyncImage(
+                    model = conversation.profilePicture,
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize().clip(CircleShape),
+                    contentScale = ContentScale.Crop,
+                    error = {
+                        Text("${conversation.firstName.firstOrNull() ?: "?"}",
+                            fontSize = 20.sp, fontWeight = FontWeight.Bold, color = DarkGreen)
+                    }
+                )
+            } else {
+                Text("${conversation.firstName.firstOrNull() ?: "?"}",
+                    fontSize = 20.sp, fontWeight = FontWeight.Bold, color = DarkGreen)
+            }
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "${conversation.firstName} ${conversation.lastName}",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f).padding(end = 8.dp)
+                )
+                Text(
+                    timeAgo(conversation.lastMessageAt),
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                )
+            }
+            Text(
+                conversation.itemTitle,
+                fontSize = 12.sp,
+                color = DarkGreen,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                conversation.latestMessage,
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+    HorizontalDivider(
+        modifier = Modifier.padding(start = 80.dp),
+        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
+    )
+}
+
+@Composable
+private fun ChatDetailContent(
+    conversation: Conversation,
+    token: String,
+    currentUserId: Int,
+    onBack: () -> Unit
+) {
+    var messages               by remember { mutableStateOf<List<ChatMessage>>(emptyList()) }
+    var isLoading              by remember { mutableStateOf(true) }
+    var messageText            by remember { mutableStateOf("") }
+    var isSending              by remember { mutableStateOf(false) }
+    var showEmojiPicker        by remember { mutableStateOf(false) }
+    val listState              = rememberLazyListState()
+    val scope                  = rememberCoroutineScope()
+    val focusManager           = LocalFocusManager.current
+    val textFieldFocusRequester = remember { FocusRequester() }
+
+    // Scroll to last message when keyboard opens so it isn't hidden behind the keyboard
+    val density   = LocalDensity.current
+    val imeBottom = WindowInsets.ime.getBottom(density)
+    LaunchedEffect(imeBottom) {
+        if (imeBottom > 0 && messages.isNotEmpty()) {
+            listState.scrollToItem(messages.size - 1)
+        }
+    }
+
+    LaunchedEffect(conversation.itemId) {
+        try {
+            val fetched = withContext(Dispatchers.IO) { fetchMessages(token, conversation.itemId) }
+            messages = fetched
+                .distinctBy { it.messageId }
+                .filter { msg ->
+                    (msg.senderId == currentUserId && msg.receiverId == conversation.otherUserId) ||
+                            (msg.senderId == conversation.otherUserId && msg.receiverId == currentUserId)
+                }
+        } catch (_: Exception) {
+            messages = emptyList()
+        } finally {
+            isLoading = false
+        }
+        if (messages.isNotEmpty()) listState.animateScrollToItem(messages.size - 1)
+    }
+
+    fun doSend() {
+        val text = messageText.trim()
+        if (text.isBlank() || isSending) return
+        messageText = ""
+        isSending   = true
+        val nowStr = java.text.SimpleDateFormat(
+            "yyyy-MM-dd HH:mm:ss", java.util.Locale.US
+        ).format(java.util.Date())
+        val optimistic = ChatMessage(
+            messageId              = -1,
+            itemId                 = conversation.itemId,
+            itemTitle              = conversation.itemTitle,
+            senderId               = currentUserId,
+            senderName             = "Me",
+            senderProfilePicture   = "",
+            receiverId             = conversation.otherUserId,
+            receiverName           = "${conversation.firstName} ${conversation.lastName}",
+            receiverProfilePicture = conversation.profilePicture,
+            message                = text,
+            sentAt                 = nowStr
+        )
+        messages = messages + optimistic
+        scope.launch {
+            if (messages.isNotEmpty()) listState.animateScrollToItem(messages.size - 1)
+            withContext(Dispatchers.IO) {
+                sendMessage(token, conversation.itemId, conversation.otherUserId, text)
+            }
+            isSending = false
+        }
+    }
+
+    // Back press: close emoji picker first, then go back to conversation list
+    BackHandler { onBack() }
+    BackHandler(enabled = showEmojiPicker) { showEmojiPicker = false }
+
+    Scaffold(
+        modifier = Modifier.fillMaxSize().imePadding(),
+        contentWindowInsets = WindowInsets(0),
+        topBar = {
+            // Header
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Brush.verticalGradient(listOf(DarkGreen, DarkGreenLight)))
+            ) {
+                Spacer(modifier = Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
+                Row(
+                    modifier = Modifier.fillMaxWidth().height(60.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Filled.ArrowBack, "Back", tint = Color.White)
+                    }
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .border(1.5.dp, Color.White.copy(alpha = 0.5f), CircleShape)
+                            .background(Color.White.copy(alpha = 0.2f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (conversation.profilePicture.isNotBlank()) {
+                            AsyncImage(
+                                model = conversation.profilePicture,
+                                contentDescription = null,
+                                modifier = Modifier.fillMaxSize().clip(CircleShape),
+                                contentScale = ContentScale.Crop
+                            )
+                        } else {
+                            Text(
+                                "${conversation.firstName.firstOrNull() ?: "?"}",
+                                fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color.White
+                            )
+                        }
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "${conversation.firstName} ${conversation.lastName}",
+                            fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
+                            color = Color.White,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            conversation.itemTitle,
+                            fontSize = 12.sp,
+                            color = Color.White.copy(alpha = 0.8f),
+                            maxLines = 1, overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+        },
+        content = { innerPadding ->
+            // Messages area
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.background)
+                ) {
+                    when {
+                        isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(color = DarkGreen)
+                        }
+                        messages.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text("No messages yet", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        else -> LazyColumn(
+                            state = listState,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 12.dp),
+                            contentPadding = PaddingValues(vertical = 12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            items(messages, key = { it.messageId }) { msg ->
+                                ChatBubble(msg = msg, isMe = msg.senderId == currentUserId)
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        bottomBar = {
+            // Bottom bar with input - will get COVERED by keyboard in this test version
+            Surface(
+                shadowElevation = 0.dp,
+                color = MaterialTheme.colorScheme.surface,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.navigationBarsPadding()) {
+                    HorizontalDivider(
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Emoji button — toggles picker panel; restores keyboard when closing
+                        IconButton(onClick = {
+                            if (showEmojiPicker) {
+                                showEmojiPicker = false
+                                scope.launch { textFieldFocusRequester.requestFocus() }
+                            } else {
+                                showEmojiPicker = true
+                                focusManager.clearFocus()
+                            }
+                        }) {
+                            Icon(
+                                if (showEmojiPicker) Icons.Outlined.Keyboard else Icons.Outlined.EmojiEmotions,
+                                contentDescription = if (showEmojiPicker) "Keyboard" else "Emoji",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+
+                        // Text field
+                        androidx.compose.foundation.text.BasicTextField(
+                            value = messageText,
+                            onValueChange = { messageText = it },
+                            modifier = Modifier
+                                .weight(1f)
+                                .defaultMinSize(minHeight = 40.dp)
+                                .focusRequester(textFieldFocusRequester)
+                                .onFocusChanged { if (it.isFocused) showEmojiPicker = false }
+                                .background(
+                                    MaterialTheme.colorScheme.surface,
+                                    RoundedCornerShape(20.dp)
+                                )
+                                .border(
+                                    1.dp,
+                                    MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
+                                    RoundedCornerShape(20.dp)
+                                )
+                                .padding(horizontal = 14.dp, vertical = 0.dp),
+                            textStyle = TextStyle(
+                                fontSize = 14.sp,
+                                lineHeight = 20.sp,
+                                color = MaterialTheme.colorScheme.onSurface
+                            ),
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                            keyboardActions = KeyboardActions(onSend = { doSend() }),
+                            maxLines = 4,
+                            decorationBox = { innerTextField ->
+                                Box(
+                                    modifier = Modifier.defaultMinSize(minHeight = 40.dp),
+                                    contentAlignment = Alignment.CenterStart
+                                ) {
+                                    if (messageText.isEmpty()) {
+                                        Text(
+                                            "Type a message…",
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                            fontSize = 14.sp,
+                                            lineHeight = 20.sp
+                                        )
+                                    }
+                                    innerTextField()
+                                }
+                            }
+                        )
+
+                        Spacer(Modifier.width(6.dp))
+
+                        // Send button
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    if (messageText.isNotBlank()) DarkGreen
+                                    else DarkGreen.copy(alpha = 0.35f)
+                                )
+                                .clickable(enabled = messageText.isNotBlank() && !isSending) {
+                                    doSend()
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (isSending) {
+                                CircularProgressIndicator(
+                                    color = Color.White,
+                                    modifier = Modifier.size(18.dp),
+                                    strokeWidth = 2.dp
+                                )
+                            } else {
+                                Icon(
+                                    Icons.Filled.Send,
+                                    contentDescription = "Send",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                    }
+                    // Emoji picker panel — shown when emoji button is toggled
+                    if (showEmojiPicker) {
+                        EmojiPickerPanel(onEmojiClick = { messageText += it })
+                    }
+                }
+            }
+        }
+    )
+}
+
+@Composable
+private fun EmojiPickerPanel(onEmojiClick: (String) -> Unit) {
+    // selectedIndex drives which category slug is requested
+    var selectedIndex    by remember { mutableStateOf(0) }
+    var categoryEmojis   by remember { mutableStateOf<List<EmojiItem>>(emptyList()) }
+    var isLoading        by remember { mutableStateOf(false) }
+
+    // Fetch only the selected category; result is cached in emojiCache at module level
+    LaunchedEffect(selectedIndex) {
+        isLoading = true
+        val (_, slug) = emojiCategories[selectedIndex]
+        categoryEmojis = try { fetchEmojisByCategory(slug) } catch (_: Exception) { emptyList() }
+        isLoading = false
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(280.dp)
+            .background(MaterialTheme.colorScheme.surface)
+    ) {
+        ScrollableTabRow(
+            selectedTabIndex = selectedIndex,
+            containerColor = MaterialTheme.colorScheme.surface,
+            contentColor = DarkGreen,
+            edgePadding = 0.dp
+        ) {
+            emojiCategories.forEachIndexed { index, (label, _) ->
+                Tab(
+                    selected = index == selectedIndex,
+                    onClick = { selectedIndex = index },
+                    text = {
+                        Text(
+                            label.replaceFirstChar { it.uppercase() },
+                            fontSize = 12.sp,
+                            maxLines = 1
+                        )
+                    }
+                )
+            }
+        }
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+        if (isLoading) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(color = DarkGreen, modifier = Modifier.size(28.dp))
+            }
+        } else {
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(44.dp),
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(4.dp)
+            ) {
+                items(categoryEmojis) { emoji ->
+                    val char = emoji.htmlCode.firstOrNull()?.let { htmlCodeToChar(it) } ?: ""
+                    if (char.isNotEmpty()) {
+                        Text(
+                            text = char,
+                            fontSize = 24.sp,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier
+                                .aspectRatio(1f)
+                                .clickable { onEmojiClick(char) }
+                                .padding(4.dp)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChatBubble(msg: ChatMessage, isMe: Boolean) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = if (isMe) Arrangement.End else Arrangement.Start,
+        verticalAlignment = Alignment.CenterVertically // Changed from Top to CenterVertically
+    ) {
+        if (!isMe) {
+            // Profile picture - centered vertically with the message bubble
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .background(DarkGreen.copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center
+            ) {
+                if (msg.senderProfilePicture.isNotBlank()) {
+                    AsyncImage(
+                        model = msg.senderProfilePicture,
+                        contentDescription = null,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clip(CircleShape),
+                        contentScale = ContentScale.Crop
+                    )
+                } else {
+                    Text(
+                        msg.senderName.firstOrNull()?.toString() ?: "?",
+                        fontSize = 13.sp,
+                        color = DarkGreen
+                    )
+                }
+            }
+            Spacer(Modifier.width(6.dp))
+        }
+
+        // Message content
+        Column(
+            modifier = Modifier.widthIn(max = 260.dp),
+            horizontalAlignment = if (isMe) Alignment.End else Alignment.Start
+        ) {
+            // Message bubble
+            Box(
+                modifier = Modifier.background(
+                    color = if (isMe) DarkGreen else MaterialTheme.colorScheme.surfaceVariant,
+                    shape = RoundedCornerShape(
+                        topStart = 18.dp,
+                        topEnd = 18.dp,
+                        bottomStart = if (isMe) 18.dp else 4.dp,
+                        bottomEnd = if (isMe) 4.dp else 18.dp
+                    )
+                ).padding(horizontal = 14.dp, vertical = 10.dp)
+            ) {
+                Text(
+                    msg.message,
+                    color = if (isMe) Color.White else MaterialTheme.colorScheme.onSurface,
+                    fontSize = 14.sp
+                )
+            }
+
+            // Timestamp
+            Text(
+                timeAgo(msg.sentAt),
+                fontSize = 10.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                modifier = Modifier.padding(
+                    top = 3.dp,
+                    start = if (isMe) 0.dp else 4.dp,
+                    end = if (isMe) 4.dp else 0.dp
+                )
+            )
+        }
+
+        if (isMe) Spacer(Modifier.width(6.dp))
     }
 }
 
@@ -827,12 +1818,20 @@ private fun AdminUsersContent(onMenuClick: () -> Unit) {
     }
 
     // Client-side filter using displayStatus (bridges is_verified / status mismatch)
-    val filteredStudents = when (selectedFilter) {
-        "Pending"  -> students.filter { it.displayStatus == "pending" }
-        "Approved" -> students.filter { it.displayStatus == "approved" }
-        "Declined" -> students.filter { it.displayStatus == "declined" }
-        else       -> students
+    // Wrapped in remember so it only recomputes when students list or filter changes
+    val filteredStudents = remember(students, selectedFilter) {
+        when (selectedFilter) {
+            "Pending"  -> students.filter { it.displayStatus == "pending" }
+            "Approved" -> students.filter { it.displayStatus == "approved" }
+            "Declined" -> students.filter { it.displayStatus == "declined" }
+            else       -> students
+        }
     }
+
+    // Pre-compute counts once per students change — avoids 3x .count() on every recomposition
+    val pendingCount  = remember(students) { students.count { it.displayStatus == "pending" } }
+    val approvedCount = remember(students) { students.count { it.displayStatus == "approved" } }
+    val declinedCount = remember(students) { students.count { it.displayStatus == "declined" } }
 
     // Student detail modal
     selectedStudent?.let { student ->
@@ -862,9 +1861,9 @@ private fun AdminUsersContent(onMenuClick: () -> Unit) {
             filters.forEach { filter ->
                 val isSelected = selectedFilter == filter
                 val count = when (filter) {
-                    "Pending"  -> students.count { it.displayStatus == "pending" }
-                    "Approved" -> students.count { it.displayStatus == "approved" }
-                    "Declined" -> students.count { it.displayStatus == "declined" }
+                    "Pending"  -> pendingCount
+                    "Approved" -> approvedCount
+                    "Declined" -> declinedCount
                     else       -> students.size
                 }
                 Box(
@@ -1506,10 +2505,17 @@ private fun AdminProfileContent(
                 isUploading = true
                 uploadError = null
                 try {
+                    val mimeType = context.contentResolver.getType(selectedUri) ?: "image/jpeg"
+                    val ext = when {
+                        mimeType.contains("png")  -> "png"
+                        mimeType.contains("webp") -> "webp"
+                        mimeType.contains("gif")  -> "gif"
+                        else                      -> "jpg"
+                    }
                     val file = withContext(Dispatchers.IO) {
                         val input = context.contentResolver.openInputStream(selectedUri)
                             ?: return@withContext null
-                        val f = File(context.filesDir, "user_profile_pic.jpg")
+                        val f = File(context.filesDir, "user_profile_pic.$ext")
                         input.use { src -> f.outputStream().use { dst -> src.copyTo(dst) } }
                         f
                     }
@@ -1519,10 +2525,13 @@ private fun AdminProfileContent(
                         return@launch
                     }
                     val token  = prefs.getString("auth_token", "") ?: ""
-                    val newUrl = withContext(Dispatchers.IO) { uploadProfilePicture(token, file) }
+                    val newUrl = withContext(Dispatchers.IO) { uploadProfilePicture(token, file, mimeType) }
                     if (newUrl != null) {
-                        prefs.edit().putString("user_profile_picture", newUrl).apply()
-                        onProfilePicUpdated(newUrl)
+                        if (newUrl.isNotEmpty()) {
+                            prefs.edit().putString("user_profile_picture", newUrl).apply()
+                            onProfilePicUpdated(newUrl)
+                        }
+                        // newUrl == "" means upload succeeded but server didn't return a new URL — treat as success
                     } else {
                         uploadError = "Upload failed. Please try again."
                     }
@@ -1664,6 +2673,10 @@ private fun ProfileInfoRow(
 
 @Composable
 private fun AdminPageHeader(title: String, onMenuClick: () -> Unit) {
+    val context = LocalContext.current
+    val prefs   = remember { context.getSharedPreferences("fatimarket_prefs", 0) }
+    val walletPoints = remember { prefs.getInt("user_wallet_points", 0) }
+
     Column(modifier = Modifier.fillMaxWidth()
         .background(Brush.verticalGradient(listOf(DarkGreen, DarkGreenLight)))) {
         Spacer(modifier = Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
@@ -1674,6 +2687,28 @@ private fun AdminPageHeader(title: String, onMenuClick: () -> Unit) {
             }
             Text(title, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White,
                 modifier = Modifier.weight(1f))
+            // Wallet points chip
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .padding(end = 4.dp)
+                    .background(Color.White.copy(alpha = 0.18f), RoundedCornerShape(50))
+                    .padding(horizontal = 10.dp, vertical = 4.dp)
+            ) {
+                Icon(
+                    Icons.Filled.AccountBalanceWallet,
+                    contentDescription = "Wallet",
+                    tint = Color.White,
+                    modifier = Modifier.size(15.dp)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    text = "$walletPoints pts",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color.White
+                )
+            }
             IconButton(onClick = { }) {
                 Icon(Icons.Filled.ChatBubbleOutline, "Messages", tint = Color.White)
             }
