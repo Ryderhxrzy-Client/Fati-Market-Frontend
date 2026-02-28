@@ -29,6 +29,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
@@ -53,6 +54,7 @@ fun LoginScreen(navController: NavController) {
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var successMessage by remember { mutableStateOf<String?>(null) }
 
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val headerGradient = Brush.verticalGradient(listOf(DarkGreen, DarkGreenLight))
 
@@ -265,10 +267,33 @@ fun LoginScreen(navController: NavController) {
                             errorMessage = null
                             isLoading = true
                             try {
-                                val (success, message) = withContext(Dispatchers.IO) {
+                                val (success, message, responseBody) = withContext(Dispatchers.IO) {
                                     loginUser(email.trim(), password)
                                 }
-                                if (success) successMessage = message else errorMessage = message
+                                if (success) {
+                                    val editor = context.getSharedPreferences("fatimarket_prefs", 0).edit()
+                                    editor.putLong("login_timestamp", System.currentTimeMillis())
+                                    if (responseBody != null) {
+                                        parseToken(responseBody)?.let { editor.putString("auth_token", it) }
+                                        try {
+                                            val data = org.json.JSONObject(responseBody).optJSONObject("data")
+                                            data?.let { d ->
+                                                editor.putInt("user_id", d.optInt("user_id", 0))
+                                                editor.putString("user_email", d.optString("email", ""))
+                                                editor.putString("user_first_name", d.optString("first_name", ""))
+                                                editor.putString("user_last_name", d.optString("last_name", ""))
+                                                val pic = if (d.isNull("profile_picture")) "" else d.optString("profile_picture", "")
+                                                editor.putString("user_profile_picture", pic)
+                                                editor.putString("user_role", d.optString("role", "admin"))
+                                                editor.putInt("user_wallet_points", d.optInt("wallet_points", 0))
+                                            }
+                                        } catch (_: Exception) {}
+                                    }
+                                    editor.apply()
+                                    successMessage = message
+                                } else {
+                                    errorMessage = message
+                                }
                             } catch (e: Exception) {
                                 errorMessage = "Login failed: ${e.message}"
                             } finally {
@@ -356,22 +381,31 @@ private val loginHttpClient = OkHttpClient.Builder()
     .readTimeout(30, TimeUnit.SECONDS)
     .build()
 
-private fun loginUser(email: String, password: String): Pair<Boolean, String> {
+private fun loginUser(email: String, password: String): Triple<Boolean, String, String?> {
     val json = """{"email":"$email","password":"$password"}"""
     val requestBody = json.toRequestBody("application/json".toMediaType())
 
     val request = Request.Builder()
         .url("https://fati-api.alertaraqc.com/api/login")
         .header("Accept", "application/json")
+        .header("Content-Type", "application/json")
         .header("X-Requested-With", "XMLHttpRequest")
         .post(requestBody)
         .build()
 
     loginHttpClient.newCall(request).execute().use { response ->
         val body = response.body?.string() ?: ""
-        return if (response.isSuccessful) Pair(true, "Login successful")
-        else Pair(false, parseLoginError(body))
+        return if (response.isSuccessful) {
+            Triple(true, "Login successful", body)   // full body — caller extracts token + user fields
+        } else {
+            Triple(false, parseLoginError(body), null)
+        }
     }
+}
+
+private fun parseToken(body: String): String? {
+    val match = Regex("\"token\"\\s*:\\s*\"([^\"]+)\"").find(body)
+    return match?.groupValues?.get(1)
 }
 
 private fun parseLoginError(body: String): String {
