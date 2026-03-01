@@ -4,7 +4,8 @@
       "Bash(python:*)",
       "Bash(pip install:*)",
       "Bash(powershell:*)",
-      "WebFetch(domain:emojihub.yurace.pro)"
+      "WebFetch(domain:emojihub.yurace.pro)",
+      "mcp__ide__getDiagnostics"
     ]
   }
 }
