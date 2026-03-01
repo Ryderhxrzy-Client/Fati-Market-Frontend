@@ -213,10 +213,13 @@ fun LoginScreen(navController: NavController) {
 
                 // ── Success Dialog ────────────────────────────────────────────────
                 successMessage?.let { msg ->
+                    val role = context.getSharedPreferences("fatimarket_prefs", 0)
+                        .getString("user_role", "admin") ?: "admin"
+                    val destination = if (role == "admin") "admin_home" else "student_home"
                     AlertDialog(
                         onDismissRequest = {
                             successMessage = null
-                            navController.navigate("admin_home") {
+                            navController.navigate(destination) {
                                 popUpTo("login") { inclusive = true }
                             }
                         },
@@ -234,7 +237,7 @@ fun LoginScreen(navController: NavController) {
                             Button(
                                 onClick = {
                                     successMessage = null
-                                    navController.navigate("admin_home") {
+                                    navController.navigate(destination) {
                                         popUpTo("login") { inclusive = true }
                                     }
                                 },
@@ -271,6 +274,13 @@ fun LoginScreen(navController: NavController) {
                                     loginUser(email.trim(), password)
                                 }
                                 if (success) {
+                                    // Check if account is blocked (some APIs still return 200 with blocked status)
+                                    val bodyLower = responseBody?.lowercase() ?: ""
+                                    if (bodyLower.contains("block")) {
+                                        errorMessage = "Your account has been blocked. Please contact the administrator."
+                                        isLoading = false
+                                        return@launch
+                                    }
                                     val editor = context.getSharedPreferences("fatimarket_prefs", 0).edit()
                                     editor.putLong("login_timestamp", System.currentTimeMillis())
                                     if (responseBody != null) {
@@ -292,7 +302,11 @@ fun LoginScreen(navController: NavController) {
                                     editor.apply()
                                     successMessage = message
                                 } else {
-                                    errorMessage = message
+                                    errorMessage = if (message.contains("block", ignoreCase = true)) {
+                                        "Your account has been blocked. Please contact the administrator."
+                                    } else {
+                                        message
+                                    }
                                 }
                             } catch (e: Exception) {
                                 errorMessage = "Login failed: ${e.message}"
