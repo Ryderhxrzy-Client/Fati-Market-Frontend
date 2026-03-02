@@ -11,13 +11,16 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import java.io.File
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -74,6 +77,22 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+// import com.pusher.client.Pusher
+// import com.pusher.client.PusherOptions
+// import android.util.Log
+// import com.pusher.client.Authorizer
+// import com.pusher.client.AuthorizationFailureException
+// import com.pusher.client.channel.PrivateChannelEventListener
+// import com.pusher.client.channel.PusherEvent
+// import com.pusher.client.channel.SubscriptionEventListener
+// import com.pusher.client.connection.ConnectionEventListener
+// import com.pusher.client.connection.ConnectionState
+// import com.pusher.client.connection.ConnectionStateChange
+// import androidx.compose.foundation.Canvas
+// import android.os.Handler
+// import android.os.Looper
+// import kotlinx.coroutines.flow.MutableSharedFlow
+import okhttp3.FormBody
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
@@ -83,6 +102,18 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsBottomHeight
+import androidx.compose.foundation.layout.windowInsetsTopHeight
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.*
+
+// ── Pusher global debug state (readable from any composable) ───────────────────
+// private val pusherGlobalStatus = mutableStateOf("idle")
+// private val pusherGlobalLog    = mutableStateOf("")
 
 // ── Drawer Pages ───────────────────────────────────────────────────────────────
 
@@ -133,10 +164,14 @@ private data class Student(
     /** Bridges cases where is_verified=true but the status field hasn't synced yet */
     val displayStatus: String get() = when {
         status.trim().lowercase() == "declined"              -> "declined"
+        status.trim().lowercase() == "blocked"               -> "blocked"
         status.trim().lowercase() == "approved" || isVerified -> "approved"
         else                                                 -> "pending"
     }
 }
+
+
+
 
 // ── Network helpers ────────────────────────────────────────────────────────────
 
@@ -146,6 +181,69 @@ private val adminHttpClient = OkHttpClient.Builder()
     .writeTimeout(15, TimeUnit.SECONDS)
     .connectionPool(okhttp3.ConnectionPool(5, 5, TimeUnit.MINUTES))
     .build()
+
+// ── Pusher config ──────────────────────────────────────────────────────────────
+// private const val PUSHER_APP_KEY  = "c7e99894a56ad96376f6"
+// private const val PUSHER_CLUSTER  = "ap2"
+// private const val PUSHER_AUTH_URL = "https://fati-api.alertaraqc.com/broadcasting/auth"
+
+// /**
+//  * Authorizer that attaches the user's Bearer token to every Pusher private-channel
+//  * auth request.  Runs on Pusher's internal thread, so blocking I/O is fine here.
+//  */
+// private class BearerTokenAuthorizer(
+//     private val authUrl: String,
+//     private val token: String
+// ) : Authorizer {
+//     override fun authorize(channelName: String, socketId: String): String {
+//         val body = FormBody.Builder()
+//             .add("socket_id", socketId)
+//             .add("channel_name", channelName)
+//             .build()
+//         val request = Request.Builder()
+//             .url(authUrl)
+//             .post(body)
+//             .header("Authorization", "Bearer $token")
+//             .header("Content-Type", "application/x-www-form-urlencoded")
+//             .build()
+//         return adminHttpClient.newCall(request).execute().use { response ->
+//             val rawBody = response.body?.string() ?: ""
+//             // Logcat only — never touch Compose state from a background thread
+//             Log.d("PusherAuth", "HTTP ${response.code} | channel=$channelName | body=$rawBody")
+//
+//             if (!response.isSuccessful) {
+//                 // Must throw AuthorizationFailureException — Pusher 2.4.x only catches this type.
+//                 // A generic Exception escapes uncaught on the background thread and kills the app.
+//                 throw AuthorizationFailureException("HTTP ${response.code}: $rawBody")
+//             }
+//
+//             // Pusher expects {"auth":"appKey:sig"} at the top level.
+//             // If the server wraps it (e.g. {"data":{"auth":...}}) unwrap it.
+//             try {
+//                 val json = JSONObject(rawBody)
+//                 if (json.has("auth")) {
+//                     rawBody
+//                 } else {
+//                     val inner = json.optJSONObject("data")
+//                         ?: json.optJSONObject("result")
+//                         ?: json.optJSONObject("payload")
+//                     if (inner != null && inner.has("auth")) {
+//                         Log.d("PusherAuth", "Unwrapped auth from nested object")
+//                         inner.toString()
+//                     } else {
+//                         Log.e("PusherAuth", "No 'auth' field found. Full response: $rawBody")
+//                         throw AuthorizationFailureException("missing 'auth' field. Server said: $rawBody")
+//                     }
+//                 }
+//             } catch (e: AuthorizationFailureException) {
+//                 throw e  // already correct type, re-throw directly
+//             } catch (e: Exception) {
+//                 Log.e("PusherAuth", "Auth response error: $rawBody", e)
+//                 throw AuthorizationFailureException(e.message ?: "parse error")
+//             }
+//         }
+//     }
+// }
 
 private fun fetchStudents(token: String, status: String? = null): List<Student> {
     val url = if (status != null)
@@ -191,6 +289,7 @@ private fun updateStudentStatus(
 
     adminHttpClient.newCall(request).execute().use { return it.isSuccessful }
 }
+
 
 /** Upload the admin's own profile picture. Returns the new picture URL on success, null otherwise. */
 private fun uploadProfilePicture(token: String, file: File, mimeType: String = "image/jpeg"): String? {
@@ -312,6 +411,7 @@ private fun ShimmerEffect(modifier: Modifier = Modifier) {
 private fun statusColor(status: String) = when (status.lowercase()) {
     "approved" -> Color(0xFF4CAF50)
     "declined" -> Color(0xFFF44336)
+    "blocked"  -> Color(0xFF9C27B0)
     else       -> Color(0xFFFF9800)
 }
 
@@ -392,7 +492,11 @@ fun AdminDashboard(isDarkMode: Boolean, onThemeToggle: () -> Unit, onLogout: () 
                     .padding(bottom = if (chatIsOpen) 0.dp else innerPadding.calculateBottomPadding())
             ) {
                 if (drawerPage != null) {
-                    DrawerPageContent(page = drawerPage!!, onMenuClick = openDrawer)
+                    DrawerPageContent(
+                        page        = drawerPage!!,
+                        onMenuClick = openDrawer,
+                        onGoToChat  = { drawerPage = null; selectedTab = AdminTab.CHAT }
+                    )
                 } else {
                     when (selectedTab) {
                         AdminTab.HOME     -> AdminHomeContent(onMenuClick = openDrawer)
@@ -653,18 +757,391 @@ private fun DrawerSubItem(label: String, selected: Boolean, onClick: () -> Unit)
 }
 
 @Composable
-private fun DrawerPageContent(page: DrawerPage, onMenuClick: () -> Unit) {
-    Column(modifier = Modifier.fillMaxSize()) {
-        AdminPageHeader(title = page.label, onMenuClick = onMenuClick)
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(Icons.Filled.Construction, null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f),
-                    modifier = Modifier.size(72.dp))
-                Spacer(modifier = Modifier.height(16.dp))
-                Text(page.label, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                Spacer(modifier = Modifier.height(4.dp))
-                Text("Coming soon", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+private fun DrawerPageContent(page: DrawerPage, onMenuClick: () -> Unit, onGoToChat: () -> Unit = {}) {
+    when (page) {
+        DrawerPage.PrivateOffers -> AdminPrivateOffersContent(onMenuClick = onMenuClick, onGoToChat = onGoToChat)
+        else -> Column(modifier = Modifier.fillMaxSize()) {
+            AdminPageHeader(title = page.label, onMenuClick = onMenuClick)
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(Icons.Filled.Construction, null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f),
+                        modifier = Modifier.size(72.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(page.label, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text("Coming soon", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+    }
+}
+
+// ── Private Offers ─────────────────────────────────────────────────────────────
+
+@Composable
+private fun AdminPrivateOffersContent(onMenuClick: () -> Unit, onGoToChat: () -> Unit = {}) {
+    val context = LocalContext.current
+    val prefs   = remember { context.getSharedPreferences("fatimarket_prefs", 0) }
+    val token   = remember { prefs.getString("auth_token", "") ?: "" }
+    val scope   = rememberCoroutineScope()
+
+    var itemList     by remember { mutableStateOf<List<Item>>(emptyList()) }
+    var isLoading    by remember { mutableStateOf(true) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+    var editingItem  by remember { mutableStateOf<Item?>(null) }
+
+    fun loadItems() {
+        scope.launch {
+            isLoading    = true
+            errorMessage = null
+            try {
+                itemList = withContext(Dispatchers.IO) { fetchItems(token, "private") }
+            } catch (e: Exception) {
+                errorMessage = e.message ?: "Failed to load items"
+            } finally {
+                isLoading = false
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) { loadItems() }
+
+    AnimatedContent(
+        targetState = editingItem != null,
+        label = "EditItemTransition"
+    ) { isEditing ->
+        if (isEditing && editingItem != null) {
+            EditItemPageForList(
+                item = editingItem!!,
+                token = token,
+                onBack = { editingItem = null },
+                onItemUpdated = { updatedItem ->
+                    itemList = itemList.map {
+                        if (it.itemId == updatedItem.itemId) {
+                            it.copy(
+                                status = updatedItem.status,
+                                markupPoints = updatedItem.markupPoints
+                            )
+                        } else it
+                    }
+                    editingItem = null
+                }
+            )
+        } else {
+            Column(modifier = Modifier.fillMaxSize()) {
+                AdminPageHeader(title = "Private Offers", onMenuClick = onMenuClick)
+
+                when {
+                    isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = DarkGreen)
+                    }
+                    errorMessage != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                            modifier = Modifier.padding(horizontal = 24.dp)
+                        ) {
+                            Icon(Icons.Filled.ErrorOutline, null,
+                                tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(48.dp))
+                            Text(errorMessage ?: "", color = MaterialTheme.colorScheme.error)
+                            Button(onClick = { loadItems() },
+                                colors = ButtonDefaults.buttonColors(containerColor = DarkGreen)) {
+                                Text("Retry", color = Color.White)
+                            }
+                        }
+                    }
+                    itemList.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(Icons.Filled.Inventory2, null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(64.dp))
+                            Text("No private offers at the moment.",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                    else -> LazyColumn(
+                        modifier            = Modifier.fillMaxSize(),
+                        contentPadding      = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        items(itemList, key = { it.itemId }) { item ->
+                            AdminPrivateOfferCard(
+                                item          = item,
+                                token         = token,
+                                onStatusSaved = { newStatus ->
+                                    itemList = itemList.map {
+                                        if (it.itemId == item.itemId) it.copy(status = newStatus) else it
+                                    }
+                                },
+                                onGoToChat    = onGoToChat,
+                                onEditClick   = { editingItem = it }
+                            )
+                        }
+                        item { Spacer(Modifier.height(8.dp)) }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AdminPrivateOfferCard(
+    item: Item,
+    token: String,
+    onStatusSaved: (String) -> Unit,
+    onGoToChat: () -> Unit = {},
+    onEditClick: (Item) -> Unit = {}
+) {
+    val scope = rememberCoroutineScope()
+
+    var showChatDialog    by remember { mutableStateOf(false) }
+    var chatText          by remember { mutableStateOf("") }
+    var isSendingChat     by remember { mutableStateOf(false) }
+    var chatError         by remember { mutableStateOf<String?>(null) }
+    var chatSent          by remember { mutableStateOf(false) }
+
+    // ── Chat dialog ───────────────────────────────────────────────────────────
+    if (showChatDialog) {
+        AlertDialog(
+            onDismissRequest = {
+                showChatDialog = false; chatText = ""; chatError = null; chatSent = false
+            },
+            title = {
+                Text("Message Seller", fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "Send a message to ${item.sellerEmail}",
+                        fontSize = 12.sp,
+                        color    = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (chatSent) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Filled.CheckCircle, null,
+                                tint = DarkGreen, modifier = Modifier.size(40.dp))
+                            Text(
+                                "Message sent successfully!",
+                                color      = DarkGreen,
+                                fontSize   = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                textAlign  = TextAlign.Center
+                            )
+                            Text(
+                                "Would you like to go to the chat?",
+                                fontSize  = 12.sp,
+                                color     = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    } else {
+                        chatError?.let {
+                            Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                        }
+                        OutlinedTextField(
+                            value         = chatText,
+                            onValueChange = { chatText = it; chatError = null },
+                            placeholder   = { Text("Type your message...") },
+                            modifier      = Modifier.fillMaxWidth(),
+                            shape         = RoundedCornerShape(12.dp),
+                            maxLines      = 4
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                if (chatSent) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = {
+                            showChatDialog = false; chatText = ""; chatSent = false
+                        }) {
+                            Text("Close")
+                        }
+                        Button(
+                            onClick = {
+                                showChatDialog = false; chatText = ""; chatSent = false
+                                onGoToChat()
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = DarkGreen)
+                        ) {
+                            Icon(Icons.Filled.Chat, null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Go to Chat", color = Color.White, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                } else {
+                    Button(
+                        onClick = {
+                            if (chatText.isBlank()) { chatError = "Please enter a message."; return@Button }
+                            scope.launch {
+                                isSendingChat = true
+                                val ok = withContext(Dispatchers.IO) {
+                                    sendMessage(token, item.itemId, item.sellerId, chatText.trim())
+                                }
+                                isSendingChat = false
+                                if (ok) chatSent = true else chatError = "Failed to send. Please try again."
+                            }
+                        },
+                        enabled = !isSendingChat,
+                        colors  = ButtonDefaults.buttonColors(containerColor = DarkGreen)
+                    ) {
+                        if (isSendingChat) {
+                            CircularProgressIndicator(color = Color.White,
+                                modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        } else {
+                            Text("Send", color = Color.White, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+            },
+            dismissButton = if (!chatSent) {
+                { TextButton(onClick = { showChatDialog = false; chatText = ""; chatError = null }) { Text("Cancel") } }
+            } else {
+                null
+            }
+        )
+    }
+
+    Card(
+        modifier  = Modifier.fillMaxWidth(),
+        shape     = RoundedCornerShape(14.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
+        colors    = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            // ── Photo ─────────────────────────────────────────────────────────
+            val photoUrl = item.photos.firstOrNull() ?: ""
+            if (photoUrl.isNotBlank()) {
+                AsyncImage(
+                    model              = photoUrl,
+                    contentDescription = null,
+                    contentScale       = ContentScale.Crop,
+                    modifier           = Modifier
+                        .fillMaxWidth()
+                        .height(180.dp)
+                        .clip(RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp))
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(140.dp)
+                        .clip(RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Filled.Photo, null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                        modifier = Modifier.size(48.dp))
+                }
+            }
+
+            Column(
+                modifier            = Modifier.fillMaxWidth().padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // ── Title + current status chip ────────────────────────────────
+                Row(
+                    modifier              = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment     = Alignment.CenterVertically
+                ) {
+                    Text(
+                        item.title,
+                        fontWeight = FontWeight.Bold,
+                        fontSize   = 17.sp,
+                        maxLines   = 1,
+                        overflow   = TextOverflow.Ellipsis,
+                        modifier   = Modifier.weight(1f).padding(end = 8.dp)
+                    )
+                    val statusColor = when (item.status.lowercase()) {
+                        "approved" -> DarkGreen
+                        "rejected" -> MaterialTheme.colorScheme.error
+                        else       -> Color(0xFFE65100)
+                    }
+                    val statusBg = when (item.status.lowercase()) {
+                        "approved" -> DarkGreen.copy(alpha = 0.12f)
+                        "rejected" -> MaterialTheme.colorScheme.errorContainer
+                        else       -> Color(0xFFFF8F00).copy(alpha = 0.12f)
+                    }
+                    Surface(shape = RoundedCornerShape(50), color = statusBg) {
+                        Text(
+                            item.status.replaceFirstChar { it.uppercaseChar() },
+                            modifier   = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                            fontSize   = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color      = statusColor
+                        )
+                    }
+                }
+
+                // ── Seller + price ─────────────────────────────────────────────
+                Row(
+                    modifier              = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment     = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Icon(Icons.Filled.Person, null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(14.dp))
+                        Text(item.sellerEmail, fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false))
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Icon(Icons.Filled.MonetizationOn, null,
+                            tint = DarkGreen, modifier = Modifier.size(14.dp))
+                        Text("${item.pricePoints} pts", fontWeight = FontWeight.Bold,
+                            color = DarkGreen, fontSize = 13.sp)
+                    }
+                }
+
+                Text(item.description, fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 3, overflow = TextOverflow.Ellipsis)
+
+                HorizontalDivider()
+
+                // ── Action buttons ─────────────────────────────────────────────
+                Row(
+                    modifier              = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = { onEditClick(item) },
+                        modifier = Modifier.weight(1f),
+                        shape    = RoundedCornerShape(10.dp),
+                        colors   = ButtonDefaults.buttonColors(containerColor = DarkGreen)
+                    ) {
+                        Icon(Icons.Filled.Edit, null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Edit Item", fontWeight = FontWeight.SemiBold)
+                    }
+                    OutlinedButton(
+                        onClick  = { showChatDialog = true },
+                        modifier = Modifier.weight(1f),
+                        shape    = RoundedCornerShape(10.dp),
+                        border   = BorderStroke(1.dp, DarkGreen),
+                        colors   = ButtonDefaults.outlinedButtonColors(contentColor = DarkGreen)
+                    ) {
+                        Icon(Icons.Filled.Chat, null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Chat Seller", fontWeight = FontWeight.SemiBold)
+                    }
+                }
             }
         }
     }
@@ -913,7 +1390,17 @@ private fun StatCard(title: String, value: String, icon: ImageVector, modifier: 
 
 // ── Chat data models ────────────────────────────────────────────────────────────
 
-private data class Conversation(
+data class ChatItem(
+    val itemId: Int,
+    val title: String,
+    val description: String,
+    val markupPoints: Int,
+    val sellerEmail: String,
+    val status: String,
+    val photos: List<String>
+)
+
+data class Conversation(
     val otherUserId: Int,
     val otherUserEmail: String,
     val firstName: String,
@@ -921,12 +1408,14 @@ private data class Conversation(
     val profilePicture: String,
     val itemId: Int,
     val itemTitle: String,
+    val itemStatus: String = "",
     val latestMessage: String,
     val lastMessageAt: String,
-    val messageCount: Int
+    val messageCount: Int,
+    val unreadCount: Int = 0
 )
 
-private data class ChatMessage(
+data class ChatMessage(
     val messageId: Int,
     val itemId: Int,
     val itemTitle: String,
@@ -954,60 +1443,115 @@ private fun fetchConversations(token: String): List<Conversation> {
             if (!response.isSuccessful) return emptyList()
             val body = response.body?.string() ?: return emptyList()
             val list = mutableListOf<Conversation>()
-            val arr = try { org.json.JSONArray(body) }
-                      catch (_: Exception) { org.json.JSONObject(body).optJSONArray("data") ?: return emptyList() }
+            val arr = when {
+                body.trimStart().startsWith("[") -> org.json.JSONArray(body)
+                else -> {
+                    val obj = org.json.JSONObject(body)
+                    obj.optJSONArray("data")
+                        ?: obj.optJSONArray("conversations")
+                        ?: obj.optJSONArray("messages")
+                        ?: return emptyList()
+                }
+            }
             for (i in 0 until arr.length()) {
                 val obj = arr.getJSONObject(i)
+                // Try every plausible field name the API might use for "the other person"
+                val userId = obj.optInt("other_user_id").takeIf { it != 0 }
+                    ?: obj.optInt("sender_id").takeIf { it != 0 }
+                    ?: obj.optInt("receiver_id").takeIf { it != 0 }
+                    ?: obj.optInt("admin_id").takeIf { it != 0 }
+                    ?: obj.optInt("user_id", 0)
+                val itemId = obj.optInt("item_id").takeIf { it != 0 }
+                    ?: obj.optInt("item", 0)
                 list.add(Conversation(
-                    otherUserId      = obj.optInt("other_user_id"),
-                    otherUserEmail   = obj.optString("other_user_email"),
+                    otherUserId      = userId,
+                    otherUserEmail   = obj.optString("other_user_email").ifBlank { obj.optString("email") },
                     firstName        = obj.optString("first_name"),
                     lastName         = obj.optString("last_name"),
                     profilePicture   = obj.optString("profile_picture"),
-                    itemId           = obj.optInt("item_id"),
-                    itemTitle        = obj.optString("item_title"),
-                    latestMessage    = obj.optString("latest_message"),
-                    lastMessageAt    = obj.optString("last_message_at"),
-                    messageCount     = obj.optInt("message_count")
+                    itemId           = itemId,
+                    itemTitle        = obj.optString("item_title").ifBlank { obj.optString("title") },
+                    itemStatus       = obj.optString("item_status").ifBlank { obj.optString("status") },
+                    latestMessage    = obj.optString("latest_message").ifBlank { obj.optString("last_message") },
+                    lastMessageAt    = obj.optString("last_message_at").ifBlank { obj.optString("updated_at") },
+                    messageCount     = obj.optInt("message_count"),
+                    unreadCount      = obj.optInt("unread_count", 0)
                 ))
             }
-            list
+            // Keep each unique user+item pair as its own conversation
+            list.distinctBy { "${it.otherUserId}_${it.itemId}" }
         }
     } catch (_: Exception) { emptyList() }
 }
 
-private fun fetchMessages(token: String, itemId: Int): List<ChatMessage> {
+/**
+ * Returns the message list on success.
+ * Throws an Exception with the HTTP status + response body on failure so the
+ * caller can display a meaningful error (instead of silently returning null).
+ */
+private fun fetchMessages(token: String, itemId: Int, otherUserId: Int = 0): List<ChatMessage> {
+    val base = "https://fati-api.alertaraqc.com/api/messages/$itemId"
+    val url  = if (otherUserId != 0) "$base?other_user_id=$otherUserId" else base
     val request = Request.Builder()
-        .url("https://fati-api.alertaraqc.com/api/messages/$itemId")
+        .url(url)
         .header("Authorization", "Bearer $token")
         .header("Accept", "application/json")
         .get()
         .build()
-    return try {
-        adminHttpClient.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) return emptyList()
-            val body = response.body?.string() ?: return emptyList()
-            val list = mutableListOf<ChatMessage>()
-            val arr = org.json.JSONObject(body).optJSONArray("data") ?: return emptyList()
-            for (i in 0 until arr.length()) {
-                val obj = arr.getJSONObject(i)
-                list.add(ChatMessage(
-                    messageId              = obj.optInt("message_id"),
-                    itemId                 = obj.optInt("item_id"),
-                    itemTitle              = obj.optString("item_title"),
-                    senderId               = obj.optInt("sender_id"),
-                    senderName             = obj.optString("sender_name"),
-                    senderProfilePicture   = obj.optString("sender_profile_picture"),
-                    receiverId             = obj.optInt("receiver_id"),
-                    receiverName           = obj.optString("receiver_name"),
-                    receiverProfilePicture = obj.optString("receiver_profile_picture"),
-                    message                = obj.optString("message"),
-                    sentAt                 = obj.optString("sent_at")
-                ))
-            }
-            list
+    adminHttpClient.newCall(request).execute().use { response ->
+        val body = response.body?.string() ?: ""
+        if (!response.isSuccessful) {
+            // Truncate body so the toast/error text stays readable
+            val preview = body.take(200).replace("\n", " ")
+            throw Exception("HTTP ${response.code} – $preview")
         }
-    } catch (_: Exception) { emptyList() }
+        val list = mutableListOf<ChatMessage>()
+        // Handle: bare array, {"data":[...]}, {"messages":[...]},
+        //         {"data":{"messages":[...]}}, {"data":{"data":[...]}}
+        val arr: org.json.JSONArray? = when {
+            body.trimStart().startsWith("[") -> org.json.JSONArray(body)
+            else -> {
+                val obj = org.json.JSONObject(body)
+                obj.optJSONArray("data")
+                    ?: obj.optJSONArray("messages")
+                    ?: obj.optJSONArray("chat_messages")
+                    ?: obj.optJSONObject("data")?.let { d ->
+                        d.optJSONArray("messages")
+                            ?: d.optJSONArray("data")
+                            ?: d.optJSONArray("chat_messages")
+                    }
+            }
+        }
+        arr ?: return emptyList()   // valid 200 body but no message array → truly empty
+        for (i in 0 until arr.length()) {
+            val obj = arr.getJSONObject(i)
+            val senderObj   = obj.optJSONObject("sender")
+            val receiverObj = obj.optJSONObject("receiver")
+            val senderId = obj.optInt("sender_id").takeIf { it != 0 }
+                ?: senderObj?.optInt("id", 0) ?: obj.optInt("from_id", 0)
+            val receiverId = obj.optInt("receiver_id").takeIf { it != 0 }
+                ?: receiverObj?.optInt("id", 0) ?: obj.optInt("to_id", 0)
+            list.add(ChatMessage(
+                messageId              = obj.optInt("message_id").takeIf { it != 0 }
+                                         ?: obj.optInt("id").takeIf { it != 0 } ?: (i + 1),
+                itemId                 = obj.optInt("item_id").takeIf { it != 0 } ?: itemId,
+                itemTitle              = obj.optString("item_title"),
+                senderId               = senderId,
+                senderName             = obj.optString("sender_name").ifBlank {
+                                         senderObj?.optString("name") ?: obj.optString("from_name") },
+                senderProfilePicture   = obj.optString("sender_profile_picture").ifBlank {
+                                         senderObj?.optString("profile_picture") ?: "" },
+                receiverId             = receiverId,
+                receiverName           = obj.optString("receiver_name").ifBlank {
+                                         receiverObj?.optString("name") ?: obj.optString("to_name") },
+                receiverProfilePicture = obj.optString("receiver_profile_picture").ifBlank {
+                                         receiverObj?.optString("profile_picture") ?: "" },
+                message                = obj.optString("message").ifBlank { obj.optString("content") },
+                sentAt                 = obj.optString("sent_at").ifBlank { obj.optString("created_at") }
+            ))
+        }
+        return list
+    }
 }
 
 private fun sendMessage(token: String, itemId: Int, receiverId: Int, message: String): Boolean {
@@ -1020,6 +1564,18 @@ private fun sendMessage(token: String, itemId: Int, receiverId: Int, message: St
         .header("Authorization", "Bearer $token")
         .header("Accept", "application/json")
         .post(json.toRequestBody("application/json".toMediaType()))
+        .build()
+    return try {
+        adminHttpClient.newCall(request).execute().use { it.isSuccessful }
+    } catch (_: Exception) { false }
+}
+
+private fun markMessagesRead(token: String, itemId: Int): Boolean {
+    val request = Request.Builder()
+        .url("https://fati-api.alertaraqc.com/api/messages/$itemId/read")
+        .header("Authorization", "Bearer $token")
+        .header("Accept", "application/json")
+        .post("{}".toRequestBody("application/json".toMediaType()))
         .build()
     return try {
         adminHttpClient.newCall(request).execute().use { it.isSuccessful }
@@ -1100,10 +1656,12 @@ private fun timeAgo(dateStr: String): String {
 // ── Chat ───────────────────────────────────────────────────────────────────────
 
 @Composable
-private fun AdminChatContent(
+fun AdminChatContent(
     onMenuClick: () -> Unit,
     selectedConversation: Conversation?,
-    onSelectConversation: (Conversation?) -> Unit
+    onSelectConversation: (Conversation?) -> Unit,
+    favoritesCount: Int = 0,
+    onFavoritesClick: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val prefs   = remember { context.getSharedPreferences("fatimarket_prefs", Context.MODE_PRIVATE) }
@@ -1114,74 +1672,132 @@ private fun AdminChatContent(
     var isLoading     by remember { mutableStateOf(true) }
     var loadError     by remember { mutableStateOf(false) }
     var searchQuery   by remember { mutableStateOf("") }
+    // 0 = All, 1 = Unread
+    var filterTab     by remember { mutableStateOf(0) }
 
-    val filteredConversations = remember(conversations, searchQuery) {
-        if (searchQuery.isBlank()) conversations
+    val filteredConversations = remember(conversations, searchQuery, filterTab) {
+        var list = if (searchQuery.isBlank()) conversations
         else {
             val q = searchQuery.trim().lowercase()
             conversations.filter { c ->
                 c.firstName.lowercase().contains(q) ||
-                c.lastName.lowercase().contains(q) ||
-                c.itemTitle.lowercase().contains(q) ||
-                c.latestMessage.lowercase().contains(q)
+                        c.lastName.lowercase().contains(q) ||
+                        c.itemTitle.lowercase().contains(q) ||
+                        c.latestMessage.lowercase().contains(q)
             }
         }
+        if (filterTab == 1) list = list.filter { it.unreadCount > 0 }
+        list
     }
 
-    LaunchedEffect(Unit) {
+    // When entering a chat: mark messages as read + zero the badge locally.
+    // When leaving a chat (conv == null): re-fetch so latest_message updates.
+    LaunchedEffect(selectedConversation) {
+        if (selectedConversation != null) {
+            val conv = selectedConversation
+            withContext(Dispatchers.IO) { markMessagesRead(token, conv.itemId) }
+            conversations = conversations.map {
+                if (it.otherUserId == conv.otherUserId && it.itemId == conv.itemId)
+                    it.copy(unreadCount = 0) else it
+            }
+            return@LaunchedEffect
+        }
+        if (conversations.isEmpty()) isLoading = true
         try {
             val result = withContext(Dispatchers.IO) { fetchConversations(token) }
             conversations = result
+            loadError = false
         } catch (_: Exception) {
-            loadError = true
+            if (conversations.isEmpty()) loadError = true
         } finally {
             isLoading = false
         }
     }
 
+    // FIXED: Properly structured AnimatedContent
     AnimatedContent(
         targetState = selectedConversation,
         transitionSpec = {
             if (targetState != null) {
                 // Opening a conversation — slide in from right
                 slideInHorizontally(tween(300)) { it } togetherWith
-                    slideOutHorizontally(tween(300)) { -it / 3 }
+                        slideOutHorizontally(tween(300)) { -it / 3 }
             } else {
                 // Going back — slide in from left
                 slideInHorizontally(tween(300)) { -it / 3 } togetherWith
-                    slideOutHorizontally(tween(300)) { it }
+                        slideOutHorizontally(tween(300)) { it }
             }
         },
         label = "ChatTransition"
     ) { conv ->
-    if (conv != null) {
-        ChatDetailContent(
-            conversation  = conv,
-            token         = token,
-            currentUserId = currentUserId,
-            onBack        = { onSelectConversation(null) }
-        )
-    } else {
-        Column(modifier = Modifier.fillMaxSize()) {
-            AdminPageHeader(title = "Messages", onMenuClick = onMenuClick)
+        if (conv != null) {
+            ChatDetailContent(
+                conversation  = conv,
+                token         = token,
+                currentUserId = currentUserId,
+                onBack        = { onSelectConversation(null) }
+            )
+        } else {
+            Column(modifier = Modifier.fillMaxSize()) {
+                AdminPageHeader(title = "Messages", onMenuClick = onMenuClick, favoritesCount = favoritesCount, onFavoritesClick = onFavoritesClick)
 
-            // ── Search bar ────────────────────────────────────────────────────
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 10.dp)
-                    .background(
-                        MaterialTheme.colorScheme.surface,
-                        RoundedCornerShape(24.dp)
-                    )
-                    .border(
-                        1.dp,
-                        MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
-                        RoundedCornerShape(24.dp)
-                    )
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+                // Pusher debug banner
+                // val dbgStatus by pusherGlobalStatus
+                // val dbgLog    by pusherGlobalLog
+                // val (bannerBg, bannerDot, bannerLabel) = when (dbgStatus) {
+                //     "subscribed"                    -> Triple(Color(0xFF1B5E20), Color(0xFF69F0AE), "Live")
+                //     "connected"                     -> Triple(Color(0xFF4A3800), Color(0xFFFFD740), "Authenticating…")
+                //     "reconnecting"                  -> Triple(Color(0xFF4A3800), Color(0xFFFFD740), "Reconnecting…")
+                //     "auth_failed"                   -> Triple(Color(0xFF4E1A1A), Color(0xFFFF5252), "Auth failed")
+                //     "error"                         -> Triple(Color(0xFF4E1A1A), Color(0xFFFF5252), "Error")
+                //     "disconnected", "disconnecting" -> Triple(Color(0xFF4E1A1A), Color(0xFFFF5252), "Disconnected")
+                //     "idle"                          -> Triple(Color(0xFF1A237E), Color(0xFF82B1FF), "No active chat")
+                //     else                            -> Triple(Color(0xFF4A3800), Color(0xFFFFD740), "Connecting…")
+                // }
+                // Row(
+                //     modifier = Modifier
+                //         .fillMaxWidth()
+                //         .background(bannerBg)
+                //         .padding(horizontal = 16.dp, vertical = 6.dp),
+                //     verticalAlignment = Alignment.CenterVertically
+                // ) {
+                //     Canvas(modifier = Modifier.size(8.dp)) { drawCircle(bannerDot) }
+                //     Spacer(Modifier.width(8.dp))
+                //     Text(
+                //         "Pusher: $bannerLabel",
+                //         fontSize = 12.sp,
+                //         fontWeight = FontWeight.SemiBold,
+                //         color = bannerDot
+                //     )
+                //     if (dbgLog.isNotEmpty()) {
+                //         Text(
+                //             "  —  $dbgLog",
+                //             fontSize = 11.sp,
+                //             color = bannerDot.copy(alpha = 0.75f),
+                //             maxLines = 1,
+                //             overflow = TextOverflow.Ellipsis,
+                //             modifier = Modifier.weight(1f)
+                //         )
+                //     }
+                // }
+
+                // Search bar
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 10.dp)
+                        .background(
+                            MaterialTheme.colorScheme.surface,
+                            RoundedCornerShape(24.dp)
+                        )
+                        .border(
+                            1.dp,
+                            MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
+                            RoundedCornerShape(24.dp)
+                        )
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Icon(
                         Icons.Outlined.Search, null,
                         tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
@@ -1225,117 +1841,235 @@ private fun AdminChatContent(
                             )
                         }
                     }
-            }
-
-            when {
-                isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = DarkGreen)
                 }
-                loadError || filteredConversations.isEmpty() -> Box(
-                    Modifier.fillMaxSize(), contentAlignment = Alignment.Center
+
+                // ── Filter chips ──────────────────────────────────────────────
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                        .padding(bottom = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(
-                            Icons.Filled.ChatBubbleOutline, null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-                            modifier = Modifier.size(72.dp)
-                        )
-                        Spacer(Modifier.height(16.dp))
-                        Text(
-                            when {
-                                loadError            -> "Failed to load conversations"
-                                searchQuery.isNotEmpty() -> "No results for \"$searchQuery\""
-                                else                 -> "No conversations yet"
-                            },
-                            fontSize = 16.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                    listOf("All", "Unread").forEachIndexed { idx, label ->
+                        val isSelected = filterTab == idx
+                        val unreadTotal = if (idx == 1) conversations.sumOf { it.unreadCount } else 0
+                        Surface(
+                            onClick = { filterTab = idx },
+                            shape = RoundedCornerShape(50),
+                            color = if (isSelected) DarkGreen else MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier.height(32.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text(
+                                    label,
+                                    fontSize = 13.sp,
+                                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                    color = if (isSelected) Color.White
+                                            else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                if (idx == 1 && unreadTotal > 0) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(18.dp)
+                                            .background(
+                                                if (isSelected) Color.White.copy(alpha = 0.3f)
+                                                else Color(0xFFE53935),
+                                                CircleShape
+                                            ),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            if (unreadTotal > 99) "99+" else "$unreadTotal",
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color.White
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
-                else -> LazyColumn(modifier = Modifier.fillMaxSize()) {
-                    items(filteredConversations, key = { "${it.otherUserId}_${it.itemId}" }) { conv ->
-                        ConversationItem(conv) { onSelectConversation(conv) }
+
+                when {
+                    isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = DarkGreen)
+                    }
+                    loadError || filteredConversations.isEmpty() -> Box(
+                        Modifier.fillMaxSize(), contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(
+                                Icons.Filled.ChatBubbleOutline, null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                                modifier = Modifier.size(72.dp)
+                            )
+                            Spacer(Modifier.height(16.dp))
+                            Text(
+                                when {
+                                    loadError                -> "Failed to load conversations"
+                                    searchQuery.isNotEmpty() -> "No results for \"$searchQuery\""
+                                    filterTab == 1           -> "No unread messages"
+                                    else                     -> "No conversations yet"
+                                },
+                                fontSize = 16.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    else -> LazyColumn(modifier = Modifier.fillMaxSize()) {
+                        items(filteredConversations, key = { "${it.otherUserId}_${it.itemId}" }) { conv ->
+                            ConversationItem(conv) { onSelectConversation(conv) }
+                        }
                     }
                 }
             }
         }
     } // end AnimatedContent
-    } // end AnimatedContent lambda
 }
 
 @Composable
 private fun ConversationItem(conversation: Conversation, onClick: () -> Unit) {
+    val hasUnread = conversation.unreadCount > 0
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .background(
+                if (hasUnread) MaterialTheme.colorScheme.primary.copy(alpha = 0.04f)
+                else Color.Transparent
+            )
+            .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         // Avatar
-        Box(
-            modifier = Modifier.size(52.dp).clip(CircleShape)
-                .background(DarkGreen.copy(alpha = 0.12f)),
-            contentAlignment = Alignment.Center
-        ) {
-            if (conversation.profilePicture.isNotBlank()) {
-                SubcomposeAsyncImage(
-                    model = conversation.profilePicture,
-                    contentDescription = null,
-                    modifier = Modifier.fillMaxSize().clip(CircleShape),
-                    contentScale = ContentScale.Crop,
-                    error = {
-                        Text("${conversation.firstName.firstOrNull() ?: "?"}",
-                            fontSize = 20.sp, fontWeight = FontWeight.Bold, color = DarkGreen)
-                    }
-                )
-            } else {
-                Text("${conversation.firstName.firstOrNull() ?: "?"}",
-                    fontSize = 20.sp, fontWeight = FontWeight.Bold, color = DarkGreen)
+        Box(modifier = Modifier.size(56.dp)) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(CircleShape)
+                    .background(DarkGreen.copy(alpha = 0.13f)),
+                contentAlignment = Alignment.Center
+            ) {
+                if (conversation.profilePicture.isNotBlank()) {
+                    SubcomposeAsyncImage(
+                        model = conversation.profilePicture,
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize().clip(CircleShape),
+                        contentScale = ContentScale.Crop,
+                        error = {
+                            Text(
+                                "${conversation.firstName.firstOrNull() ?: "?"}",
+                                fontSize = 22.sp, fontWeight = FontWeight.Bold, color = DarkGreen
+                            )
+                        }
+                    )
+                } else {
+                    Text(
+                        "${conversation.firstName.firstOrNull() ?: "?"}",
+                        fontSize = 22.sp, fontWeight = FontWeight.Bold, color = DarkGreen
+                    )
+                }
             }
         }
         Spacer(Modifier.width(12.dp))
+        // Text content
         Column(modifier = Modifier.weight(1f)) {
+            // Row 1: item title + time
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    "${conversation.firstName} ${conversation.lastName}",
+                    conversation.itemTitle,
                     fontSize = 15.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = if (hasUnread) FontWeight.Bold else FontWeight.SemiBold,
+                    color = DarkGreen,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f).padding(end = 8.dp)
+                    modifier = Modifier.weight(1f)
                 )
+                Spacer(Modifier.width(6.dp))
                 Text(
                     timeAgo(conversation.lastMessageAt),
                     fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                    fontWeight = if (hasUnread) FontWeight.SemiBold else FontWeight.Normal,
+                    color = if (hasUnread) DarkGreen
+                            else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
                 )
             }
+            Spacer(Modifier.height(1.dp))
+            // Row 2: sender name
             Text(
-                conversation.itemTitle,
+                "${conversation.firstName} ${conversation.lastName}",
                 fontSize = 12.sp,
-                color = DarkGreen,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Text(
-                conversation.latestMessage,
-                fontSize = 13.sp,
+                fontWeight = FontWeight.Normal,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(bottom = 2.dp)
             )
+            // Status chip (private = negotiating, public = available)
+            if (conversation.itemStatus.isNotBlank()) {
+                val isPrivate = conversation.itemStatus.lowercase() == "pending"
+                Surface(
+                    shape    = RoundedCornerShape(4.dp),
+                    color    = if (isPrivate) Color(0xFFFF8F00).copy(alpha = 0.12f)
+                               else DarkGreen.copy(alpha = 0.10f),
+                    modifier = Modifier.padding(bottom = 3.dp)
+                ) {
+                    Text(
+                        if (isPrivate) "Negotiating" else conversation.itemStatus.replaceFirstChar { it.uppercaseChar() },
+                        fontSize   = 9.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color      = if (isPrivate) Color(0xFFE65100) else DarkGreen,
+                        modifier   = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
+            }
+            // Row 3: latest message + unread badge
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    conversation.latestMessage,
+                    fontSize = 13.sp,
+                    fontWeight = if (hasUnread) FontWeight.SemiBold else FontWeight.Normal,
+                    color = if (hasUnread) MaterialTheme.colorScheme.onSurface
+                            else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                if (hasUnread) {
+                    Spacer(Modifier.width(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .defaultMinSize(minWidth = 20.dp, minHeight = 20.dp)
+                            .background(Color(0xFFE53935), CircleShape)
+                            .padding(horizontal = 5.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            if (conversation.unreadCount > 99) "99+" else "${conversation.unreadCount}",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    }
+                }
+            }
         }
     }
     HorizontalDivider(
-        modifier = Modifier.padding(start = 80.dp),
-        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
+        modifier = Modifier.padding(start = 84.dp),
+        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f)
     )
 }
 
@@ -1348,43 +2082,209 @@ private fun ChatDetailContent(
 ) {
     var messages               by remember { mutableStateOf<List<ChatMessage>>(emptyList()) }
     var isLoading              by remember { mutableStateOf(true) }
+    var fetchError             by remember { mutableStateOf(false) }
+    var fetchErrorMsg          by remember { mutableStateOf("") }
+    var retryTrigger           by remember { mutableStateOf(0) }   // increment to retry
     var messageText            by remember { mutableStateOf("") }
     var isSending              by remember { mutableStateOf(false) }
     var showEmojiPicker        by remember { mutableStateOf(false) }
+    var chatItem               by remember { mutableStateOf<ChatItem?>(null) }
+    var showItemPreview        by remember { mutableStateOf(false) }
+    var showEditItem           by remember { mutableStateOf(false) }
+    // val pusherStatus   by pusherGlobalStatus
+    // val pusherDebugLog by pusherGlobalLog
     val listState              = rememberLazyListState()
     val scope                  = rememberCoroutineScope()
     val focusManager           = LocalFocusManager.current
     val textFieldFocusRequester = remember { FocusRequester() }
 
-    // Scroll to last message when keyboard opens so it isn't hidden behind the keyboard
-    val density   = LocalDensity.current
-    val imeBottom = WindowInsets.ime.getBottom(density)
-    LaunchedEffect(imeBottom) {
-        if (imeBottom > 0 && messages.isNotEmpty()) {
-            listState.scrollToItem(messages.size - 1)
+    // ── Pusher real-time ──────────────────────────────────────────────────────
+    // Hot flow used as a thread-safe bridge between Pusher's callback thread
+    // and the Compose main thread.
+    // val incomingFlow = remember { MutableSharedFlow<ChatMessage>(extraBufferCapacity = 64) }
+
+    // DisposableEffect(currentUserId, conversation.otherUserId) {
+    //     val handler     = Handler(Looper.getMainLooper())
+    //     val channelName = "private-conversation.$currentUserId.${conversation.otherUserId}"
+    //     var pusherRef: Pusher? = null
+    //
+    //     try {
+    //         val tokenPreview = if (token.length > 8) "${token.take(8)}…" else "(empty)"
+    //         handler.post {
+    //             pusherGlobalStatus.value = "connecting"
+    //             pusherGlobalLog.value    = "token=$tokenPreview ch=$channelName"
+    //         }
+    //         Log.d("PusherSetup", "token=$tokenPreview channel=$channelName")
+    //
+    //         val options = PusherOptions().apply {
+    //             setCluster(PUSHER_CLUSTER)
+    //             setAuthorizer(BearerTokenAuthorizer(PUSHER_AUTH_URL, token))
+    //         }
+    //         val pusher = Pusher(PUSHER_APP_KEY, options)
+    //         pusherRef = pusher
+    //
+    //         val channel = pusher.subscribePrivate(
+    //             channelName,
+    //             object : PrivateChannelEventListener {
+    //                 override fun onEvent(event: PusherEvent) {}
+    //                 override fun onSubscriptionSucceeded(cn: String) {
+    //                     Log.d("Pusher", "Subscribed to $cn")
+    //                     handler.post {
+    //                         pusherGlobalStatus.value = "subscribed"
+    //                         pusherGlobalLog.value    = "OK — $cn"
+    //                     }
+    //                 }
+    //                 override fun onAuthenticationFailure(message: String, e: Exception) {
+    //                     Log.e("Pusher", "Auth failed for $channelName: $message", e)
+    //                     handler.post {
+    //                         pusherGlobalStatus.value = "auth_failed"
+    //                         pusherGlobalLog.value    = message
+    //                     }
+    //                 }
+    //             }
+    //         )
+    //
+    //         channel.bind("message.sent", object : PrivateChannelEventListener {
+    //             override fun onEvent(event: PusherEvent) {
+    //                 Log.d("Pusher", "message.sent: ${event.data}")
+    //                 handler.post { pusherGlobalLog.value = "rx: ${event.data.take(60)}" }
+    //                 try {
+    //                     val d: JSONObject = when (val v = org.json.JSONTokener(event.data).nextValue()) {
+    //                         is JSONObject -> v
+    //                         is String     -> JSONObject(v)
+    //                         else          -> return
+    //                     }
+    //                     incomingFlow.tryEmit(ChatMessage(
+    //                         messageId              = d.optInt("message_id", d.optInt("id", -1)),
+    //                         itemId                 = d.optInt("item_id", conversation.itemId),
+    //                         itemTitle              = d.optString("item_title", conversation.itemTitle),
+    //                         senderId               = d.optInt("sender_id"),
+    //                         senderName             = d.optString("sender_name"),
+    //                         senderProfilePicture   = d.optString("sender_profile_picture"),
+    //                         receiverId             = d.optInt("receiver_id"),
+    //                         receiverName           = d.optString("receiver_name"),
+    //                         receiverProfilePicture = d.optString("receiver_profile_picture"),
+    //                         message                = d.optString("message"),
+    //                         sentAt                 = d.optString("sent_at", d.optString("created_at", ""))
+    //                     ))
+    //                 } catch (e: Exception) {
+    //                     Log.e("Pusher", "Parse error: ${event.data}", e)
+    //                     handler.post { pusherGlobalLog.value = "parse error: ${e.message}" }
+    //                 }
+    //             }
+    //             override fun onSubscriptionSucceeded(cn: String) {}
+    //             override fun onAuthenticationFailure(message: String, e: Exception) {
+    //                 Log.e("Pusher", "Bind auth failed: $message", e)
+    //                 handler.post {
+    //                     pusherGlobalStatus.value = "auth_failed"
+    //                     pusherGlobalLog.value    = message
+    //                 }
+    //             }
+    //         })
+    //
+    //         pusher.connect(object : ConnectionEventListener {
+    //             override fun onConnectionStateChange(change: ConnectionStateChange) {
+    //                 Log.d("Pusher", "${change.previousState} → ${change.currentState}")
+    //                 handler.post {
+    //                     pusherGlobalStatus.value = when (change.currentState) {
+    //                         ConnectionState.CONNECTING    -> "connecting"
+    //                         ConnectionState.CONNECTED     -> "connected"
+    //                         ConnectionState.DISCONNECTED  -> "disconnected"
+    //                         ConnectionState.RECONNECTING  -> "reconnecting"
+    //                         ConnectionState.DISCONNECTING -> "disconnecting"
+    //                         else                          -> "unknown"
+    //                     }
+    //                 }
+    //             }
+    //             override fun onError(message: String, code: String?, e: Exception?) {
+    //                 Log.e("Pusher", "Connection error: $message code=$code", e)
+    //                 handler.post {
+    //                     pusherGlobalStatus.value = "error"
+    //                     pusherGlobalLog.value    = "conn error: $message"
+    //                 }
+    //             }
+    //         }, ConnectionState.ALL)
+    //
+    //     } catch (e: Exception) {
+    //         Log.e("Pusher", "Setup crashed", e)
+    //         handler.post {
+    //             pusherGlobalStatus.value = "error"
+    //             pusherGlobalLog.value    = "setup error: ${e.message}"
+    //         }
+    //     }
+    //
+    //     onDispose {
+    //         try { pusherRef?.unsubscribe(channelName) } catch (_: Exception) {}
+    //         try { pusherRef?.disconnect() } catch (_: Exception) {}
+    //         // post to avoid writing state synchronously during Compose apply phase
+    //         handler.post {
+    //             pusherGlobalStatus.value = "idle"
+    //             pusherGlobalLog.value    = "disconnected"
+    //         }
+    //     }
+    // }
+
+    // Merge incoming Pusher messages into the UI message list
+    // LaunchedEffect(incomingFlow) {
+    //     incomingFlow.collect { msg ->
+    //         when {
+    //             // Message we sent: swap out our optimistic placeholder with the confirmed copy
+    //             msg.senderId == currentUserId -> {
+    //                 messages = messages.map { existing ->
+    //                     if (existing.messageId == -1 &&
+    //                         existing.message.trim() == msg.message.trim()) msg
+    //                     else existing
+    //                 }
+    //             }
+    //             // New message from the other participant — append if not already present
+    //             messages.none { it.messageId == msg.messageId } -> {
+    //                 messages = messages + msg
+    //                 listState.scrollToItem(messages.size - 1)
+    //             }
+    //         }
+    //     }
+    // }
+    // ─────────────────────────────────────────────────────────────────────────
+
+    LaunchedEffect(conversation.otherUserId, conversation.itemId) {
+        chatItem = withContext(Dispatchers.IO) { fetchChatItem(token, conversation.itemId) }
+    }
+
+    LaunchedEffect(conversation.otherUserId, conversation.itemId, retryTrigger) {
+        if (conversation.itemId == 0) { isLoading = false; return@LaunchedEffect }
+        isLoading = true
+        fetchError = false
+        fetchErrorMsg = ""
+        try {
+            val fetched = withContext(Dispatchers.IO) {
+                fetchMessages(token, conversation.itemId, conversation.otherUserId)
+            }
+            messages = fetched.distinctBy { it.messageId }
+        } catch (e: Exception) {
+            fetchError = true
+            fetchErrorMsg = e.message ?: "Unknown error"
+        } finally {
+            isLoading = false
+            // reverseLayout=true means newest message is always at index 0 (bottom)
+            // — no scroll needed after load, the list is already at the correct position
         }
     }
 
-    LaunchedEffect(conversation.itemId) {
-        try {
-            val fetched = withContext(Dispatchers.IO) { fetchMessages(token, conversation.itemId) }
-            messages = fetched
-                .distinctBy { it.messageId }
-                .filter { msg ->
-                    (msg.senderId == currentUserId && msg.receiverId == conversation.otherUserId) ||
-                            (msg.senderId == conversation.otherUserId && msg.receiverId == currentUserId)
-                }
-        } catch (_: Exception) {
-            messages = emptyList()
-        } finally {
-            isLoading = false
-        }
-        if (messages.isNotEmpty()) listState.animateScrollToItem(messages.size - 1)
-    }
 
     fun doSend() {
         val text = messageText.trim()
         if (text.isBlank() || isSending) return
+
+        // Resolve receiver ID:
+        // 1. Use the conversation's otherUserId if it was parsed correctly (non-zero).
+        // 2. Fall back to inferring from already-loaded messages — look for a
+        //    receiver_id on messages WE sent, or a sender_id on messages THEY sent.
+        // This handles the case where the conversations API omits other_user_id.
+        val receiverId = conversation.otherUserId.takeIf { it != 0 }
+            ?: messages.firstOrNull { it.senderId == currentUserId }?.receiverId?.takeIf { it != 0 }
+            ?: messages.firstOrNull { it.senderId != currentUserId }?.senderId?.takeIf { it != 0 }
+            ?: return  // still unknown — don't send a broken request
+
         messageText = ""
         isSending   = true
         val nowStr = java.text.SimpleDateFormat(
@@ -1397,7 +2297,7 @@ private fun ChatDetailContent(
             senderId               = currentUserId,
             senderName             = "Me",
             senderProfilePicture   = "",
-            receiverId             = conversation.otherUserId,
+            receiverId             = receiverId,
             receiverName           = "${conversation.firstName} ${conversation.lastName}",
             receiverProfilePicture = conversation.profilePicture,
             message                = text,
@@ -1405,9 +2305,9 @@ private fun ChatDetailContent(
         )
         messages = messages + optimistic
         scope.launch {
-            if (messages.isNotEmpty()) listState.animateScrollToItem(messages.size - 1)
+            // reverseLayout=true keeps newest at index 0 (bottom) — no manual scroll needed
             withContext(Dispatchers.IO) {
-                sendMessage(token, conversation.itemId, conversation.otherUserId, text)
+                sendMessage(token, conversation.itemId, receiverId, text)
             }
             isSending = false
         }
@@ -1416,12 +2316,55 @@ private fun ChatDetailContent(
     // Back press: close emoji picker first, then go back to conversation list
     BackHandler { onBack() }
     BackHandler(enabled = showEmojiPicker) { showEmojiPicker = false }
+    BackHandler(enabled = showItemPreview && !showEmojiPicker) { showItemPreview = false }
+    BackHandler(enabled = showEditItem && !showEmojiPicker && !showItemPreview) { showEditItem = false }
 
-    Scaffold(
-        modifier = Modifier.fillMaxSize().imePadding(),
-        contentWindowInsets = WindowInsets(0),
-        topBar = {
-            // Header
+    // ── Item detail / Edit pages (full-screen, slides in over the chat) ────────
+    AnimatedContent(
+        targetState = when {
+            showEditItem -> "edit"
+            showItemPreview -> "view"
+            else -> "chat"
+        },
+        transitionSpec = {
+            if (targetState != "chat") {
+                slideInHorizontally(tween(280)) { it } togetherWith
+                        slideOutHorizontally(tween(280)) { -it / 3 }
+            } else {
+                slideInHorizontally(tween(280)) { -it / 3 } togetherWith
+                        slideOutHorizontally(tween(280)) { it }
+            }
+        },
+        label = "ItemPageTransition"
+    ) { state ->
+        when (state) {
+            "edit" -> {
+                chatItem?.let { item ->
+                    EditItemPage(
+                        item = item,
+                        token = token,
+                        onBack = { showEditItem = false },
+                        onItemUpdated = { updatedItem ->
+                            chatItem = updatedItem
+                            showEditItem = false
+                        }
+                    )
+                } ?: run { showEditItem = false }
+            }
+            "view" -> {
+                chatItem?.let { item ->
+                    ChatItemDetailPage(item = item, onBack = { showItemPreview = false })
+                } ?: run { showItemPreview = false }
+            }
+            else -> {
+                // Flat Column — mirrors Messenger's layout. No Scaffold re-measure on every
+                // keyboard frame; imePadding() only re-measures this simple Column + children.
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .imePadding()
+                ) {
+            // ── Top bar ────────────────────────────────────────────────────────
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1473,52 +2416,228 @@ private fun ChatDetailContent(
                         )
                     }
                 }
-            }
-        },
-        content = { innerPadding ->
-            // Messages area
-            Column(
+                // ── Item info bar (sticky, always visible) ────────────────────
+                chatItem?.let { item ->
+                    HorizontalDivider(color = Color.White.copy(alpha = 0.15f))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(DarkGreen.copy(alpha = 0.75f))
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        // Thumbnail
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color.White.copy(alpha = 0.2f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (item.photos.isNotEmpty()) {
+                                AsyncImage(
+                                    model = item.photos.first(),
+                                    contentDescription = null,
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .clip(RoundedCornerShape(8.dp)),
+                                    contentScale = ContentScale.Crop
+                                )
+                            } else {
+                                Icon(Icons.Filled.Photo, null,
+                                    tint = Color.White.copy(alpha = 0.6f),
+                                    modifier = Modifier.size(20.dp))
+                            }
+                        }
+                        // Title + price + status
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                item.title,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color.White,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                // Points
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                ) {
+                                    Icon(Icons.Filled.MonetizationOn, null,
+                                        tint = Color.White.copy(alpha = 0.85f),
+                                        modifier = Modifier.size(11.dp))
+                                    Text(
+                                        "${item.markupPoints} pts",
+                                        fontSize = 11.sp,
+                                        color = Color.White.copy(alpha = 0.85f),
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                                // Status badge (moved next to points)
+                                val isPrivate = item.status.lowercase() == "pending"
+                                Surface(
+                                    shape = RoundedCornerShape(4.dp),
+                                    color = if (isPrivate) Color(0xFFFF8F00).copy(alpha = 0.30f)
+                                            else Color.White.copy(alpha = 0.20f)
+                                ) {
+                                    Text(
+                                        if (isPrivate) "Negotiating" else item.status.replaceFirstChar { it.uppercaseChar() },
+                                        fontSize   = 9.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color      = Color.White,
+                                        modifier   = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+                        }
+                        // Buttons (View Item and Edit Item)
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // Edit Item button (visible only if status is private or acquired)
+                            val canEditItem = item.status.lowercase() == "private" ||
+                                             item.status.lowercase() == "acquired"
+                            if (canEditItem) {
+                                OutlinedButton(
+                                    onClick = { showEditItem = true },
+                                    shape = RoundedCornerShape(8.dp),
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.7f)),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                                    modifier = Modifier.height(28.dp)
+                                ) {
+                                    Icon(Icons.Filled.Edit, null, modifier = Modifier.size(14.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Edit", fontSize = 10.sp, fontWeight = FontWeight.Medium, color = Color.White)
+                                }
+                            }
+
+                            // View Item button
+                            OutlinedButton(
+                                onClick = { showItemPreview = true },
+                                shape = RoundedCornerShape(8.dp),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.7f)),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                                modifier = Modifier.height(28.dp)
+                            ) {
+                                Text("View Item", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = Color.White)
+                            }
+                        }
+                    }
+                }
+            } // end top bar Column
+
+            // ── Messages ────────────────────────────────────────────────────────
+            Box(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(innerPadding)
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.background)
             ) {
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.background)
-                ) {
                     when {
                         isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             CircularProgressIndicator(color = DarkGreen)
+                        }
+                        fetchError -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Warning,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(40.dp)
+                                )
+                                Text(
+                                    "Failed to load messages",
+                                    color = MaterialTheme.colorScheme.error,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Button(
+                                    onClick = { retryTrigger++ },
+                                    colors = ButtonDefaults.buttonColors(containerColor = DarkGreen)
+                                ) {
+                                    Text("Retry", color = Color.White)
+                                }
+                            }
                         }
                         messages.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             Text("No messages yet", color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         else -> LazyColumn(
                             state = listState,
+                            // reverseLayout = true: item 0 anchors to bottom.
+                            // Newest messages stay visible when keyboard opens —
+                            // no programmatic scroll needed (mirrors Messenger).
+                            reverseLayout = true,
                             modifier = Modifier
                                 .fillMaxSize()
                                 .padding(horizontal = 12.dp),
                             contentPadding = PaddingValues(vertical = 12.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            items(messages, key = { it.messageId }) { msg ->
+                            // Pass reversed list so newest message is at index 0 (bottom)
+                            items(messages.asReversed(), key = { it.messageId }) { msg ->
                                 ChatBubble(msg = msg, isMe = msg.senderId == currentUserId)
                             }
                         }
                     }
-                }
-            }
-        },
-        bottomBar = {
-            // Bottom bar with input - will get COVERED by keyboard in this test version
+            } // end messages Box
+
+            // ── Input bar ───────────────────────────────────────────────────────
             Surface(
                 shadowElevation = 0.dp,
                 color = MaterialTheme.colorScheme.surface,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.navigationBarsPadding()) {
+                    // ── Pusher debug status bar ───────────────────────────────
+                    // val (dotColor, statusLabel) = when (pusherStatus) {
+                    //     "subscribed"    -> Color(0xFF4CAF50) to "Live"
+                    //     "connected"     -> Color(0xFFFF9800) to "Authenticating…"
+                    //     "reconnecting"  -> Color(0xFFFF9800) to "Reconnecting…"
+                    //     "auth_failed"   -> Color(0xFFF44336) to "Auth failed"
+                    //     "error"         -> Color(0xFFF44336) to "Error"
+                    //     "disconnected",
+                    //     "disconnecting" -> Color(0xFFF44336) to "Disconnected"
+                    //     else            -> Color(0xFFFF9800) to "Connecting…"
+                    // }
+                    // Row(
+                    //     modifier = Modifier
+                    //         .fillMaxWidth()
+                    //         .padding(horizontal = 12.dp, vertical = 3.dp),
+                    //     verticalAlignment = Alignment.CenterVertically,
+                    //     horizontalArrangement = Arrangement.Center
+                    // ) {
+                    //     Canvas(modifier = Modifier.size(7.dp)) { drawCircle(dotColor) }
+                    //     Spacer(Modifier.width(5.dp))
+                    //     Text(
+                    //         statusLabel,
+                    //         fontSize = 11.sp,
+                    //         color = dotColor,
+                    //         fontWeight = FontWeight.Medium
+                    //     )
+                    //     if (pusherDebugLog.isNotEmpty()) {
+                    //         Text(
+                    //             "  •  $pusherDebugLog",
+                    //             fontSize = 10.sp,
+                    //             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+                    //             maxLines = 1,
+                    //             overflow = TextOverflow.Ellipsis,
+                    //             modifier = Modifier.weight(1f, fill = false)
+                    //         )
+                    //     }
+                    // }
+                    // ─────────────────────────────────────────────────────────
                     HorizontalDivider(
                         color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
                     )
@@ -1629,8 +2748,10 @@ private fun ChatDetailContent(
                     }
                 }
             }
-        }
-    )
+                } // end outer Column (chat view)
+                } // end else (chat view)
+        } // end when (AnimatedContent state)
+    } // end AnimatedContent
 }
 
 @Composable
@@ -1698,6 +2819,680 @@ private fun EmojiPickerPanel(onEmojiClick: (String) -> Unit) {
                                 .padding(4.dp)
                         )
                     }
+                }
+            }
+        }
+    }
+}
+
+// ── Item Detail Page (shown when "View Item" is tapped in chat) ────────────────
+
+@Composable
+private fun ChatItemDetailPage(item: ChatItem, onBack: () -> Unit) {
+    var currentImageIndex by remember { mutableStateOf(0) }
+    BackHandler(onBack = onBack)
+
+    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            // ── Top bar ────────────────────────────────────────────────────────
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Brush.verticalGradient(listOf(DarkGreen, DarkGreenLight)))
+            ) {
+                Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Filled.ArrowBack, "Back", tint = Color.White)
+                    }
+                    Text(
+                        "Item Details",
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+            // ── Scrollable content ──────────────────────────────────────────────
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+            ) {
+                // Photo viewer
+                if (item.photos.isNotEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(300.dp)
+                    ) {
+                        AsyncImage(
+                            model = item.photos[currentImageIndex],
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                        if (item.photos.size > 1) {
+                            Surface(
+                                modifier = Modifier
+                                    .align(Alignment.BottomEnd)
+                                    .padding(10.dp),
+                                color = Color.Black.copy(alpha = 0.55f),
+                                shape = RoundedCornerShape(50)
+                            ) {
+                                Text(
+                                    "${currentImageIndex + 1} / ${item.photos.size}",
+                                    color = Color.White,
+                                    fontSize = 11.sp,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
+                    }
+                    // Thumbnail strip
+                    if (item.photos.size > 1) {
+                        LazyRow(
+                            contentPadding = PaddingValues(12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            itemsIndexed(item.photos) { index, url ->
+                                AsyncImage(
+                                    model = url,
+                                    contentDescription = null,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier
+                                        .size(64.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .border(
+                                                width = if (index == currentImageIndex) 2.dp else 1.dp,
+                                                color = if (index == currentImageIndex) DarkGreen
+                                                        else MaterialTheme.colorScheme.outlineVariant,
+                                                shape = RoundedCornerShape(8.dp)
+                                            )
+                                            .clickable { currentImageIndex = index }
+                                    )
+                            }
+                        }
+                    }
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(220.dp)
+                            .background(MaterialTheme.colorScheme.surfaceVariant),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Filled.Photo, null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                            modifier = Modifier.size(64.dp)
+                        )
+                    }
+                }
+                // Info section
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(item.title, fontWeight = FontWeight.Bold, fontSize = 22.sp)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(Icons.Filled.MonetizationOn, null, tint = DarkGreen, modifier = Modifier.size(22.dp))
+                        Text("${item.markupPoints} pts", fontWeight = FontWeight.Bold, color = DarkGreen, fontSize = 20.sp)
+                    }
+                    val statusColor = when (item.status.lowercase()) {
+                        "approved" -> DarkGreen
+                        "rejected" -> MaterialTheme.colorScheme.error
+                        else       -> MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+                    Surface(shape = RoundedCornerShape(50), color = statusColor.copy(alpha = 0.12f)) {
+                        Text(
+                            item.status.replaceFirstChar { it.uppercaseChar() },
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = statusColor
+                        )
+                    }
+                    HorizontalDivider()
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(Icons.Filled.Person, null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(18.dp))
+                        Text(item.sellerEmail, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    if (item.description.isNotBlank()) {
+                        HorizontalDivider()
+                        Text("Description", fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                        Text(item.description, fontSize = 14.sp, lineHeight = 22.sp)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EditItemPage(
+    item: ChatItem,
+    token: String,
+    onBack: () -> Unit,
+    onItemUpdated: (ChatItem) -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    var currentImageIndex by remember { mutableStateOf(0) }
+    var editStatus by remember { mutableStateOf(item.status) }
+    var editMarkupPoints by remember { mutableStateOf(item.markupPoints.toString()) }
+    var isSaving by remember { mutableStateOf(false) }
+    var saveError by remember { mutableStateOf<String?>(null) }
+    var saveSuccess by remember { mutableStateOf(false) }
+
+    BackHandler(onBack = onBack)
+
+    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            // ── Top bar ────────────────────────────────────────────────────────
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Brush.verticalGradient(listOf(DarkGreen, DarkGreenLight)))
+            ) {
+                Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Filled.ArrowBack, "Back", tint = Color.White)
+                    }
+                    Text(
+                        "Edit Item",
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+            // ── Scrollable content ──────────────────────────────────────────────
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+            ) {
+                // Photo viewer
+                if (item.photos.isNotEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(300.dp)
+                    ) {
+                        AsyncImage(
+                            model = item.photos[currentImageIndex],
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                        if (item.photos.size > 1) {
+                            Surface(
+                                modifier = Modifier
+                                    .align(Alignment.BottomEnd)
+                                    .padding(10.dp),
+                                color = Color.Black.copy(alpha = 0.55f),
+                                shape = RoundedCornerShape(50)
+                            ) {
+                                Text(
+                                    "${currentImageIndex + 1} / ${item.photos.size}",
+                                    color = Color.White,
+                                    fontSize = 11.sp,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
+                    }
+                    // Thumbnail strip
+                    if (item.photos.size > 1) {
+                        LazyRow(
+                            contentPadding = PaddingValues(12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            itemsIndexed(item.photos) { index, url ->
+                                AsyncImage(
+                                    model = url,
+                                    contentDescription = null,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier
+                                        .size(64.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .border(
+                                            width = if (index == currentImageIndex) 2.dp else 1.dp,
+                                            color = if (index == currentImageIndex) DarkGreen
+                                                    else MaterialTheme.colorScheme.outlineVariant,
+                                            shape = RoundedCornerShape(8.dp)
+                                        )
+                                        .clickable { currentImageIndex = index }
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(220.dp)
+                            .background(MaterialTheme.colorScheme.surfaceVariant),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Filled.Photo, null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                            modifier = Modifier.size(64.dp)
+                        )
+                    }
+                }
+                // Editable info section
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(item.title, fontWeight = FontWeight.Bold, fontSize = 22.sp)
+
+                    // Status field (editable)
+                    Text("Status", fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    OutlinedTextField(
+                        value = editStatus,
+                        onValueChange = { editStatus = it; saveError = null },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp),
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = DarkGreen,
+                            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
+                        )
+                    )
+
+                    // Markup Points field (editable only if status is private or acquired)
+                    val canEditMarkup = item.status.lowercase() == "private" ||
+                                       item.status.lowercase() == "acquired"
+                    if (canEditMarkup) {
+                        Text("Markup Points", fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        OutlinedTextField(
+                            value = editMarkupPoints,
+                            onValueChange = { editMarkupPoints = it; saveError = null },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(10.dp),
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = DarkGreen,
+                                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
+                            )
+                        )
+                    }
+
+                    HorizontalDivider()
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(Icons.Filled.Person, null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(18.dp))
+                        Text(item.sellerEmail, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    if (item.description.isNotBlank()) {
+                        HorizontalDivider()
+                        Text("Description", fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                        Text(item.description, fontSize = 14.sp, lineHeight = 22.sp)
+                    }
+
+                    HorizontalDivider()
+
+                    // Save and error messages
+                    saveError?.let {
+                        Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                    }
+                    if (saveSuccess) {
+                        Row(verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Icon(Icons.Filled.CheckCircle, null,
+                                tint = DarkGreen, modifier = Modifier.size(14.dp))
+                            Text("Item updated!", color = DarkGreen, fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+
+                    // Save button
+                    Button(
+                        onClick = {
+                            saveError = null
+                            if (editStatus.isBlank()) {
+                                saveError = "Status cannot be empty."
+                                return@Button
+                            }
+                            val markupPts = editMarkupPoints.toIntOrNull()
+                            if (canEditMarkup && editMarkupPoints.isNotBlank() && markupPts == null) {
+                                saveError = "Markup points must be a valid number."
+                                return@Button
+                            }
+                            scope.launch {
+                                isSaving = true
+                                val (ok, errMsg) = withContext(Dispatchers.IO) {
+                                    updateAdminItem(
+                                        token,
+                                        item.itemId,
+                                        status = editStatus,
+                                        markupPoints = if (canEditMarkup) markupPts else null
+                                    )
+                                }
+                                isSaving = false
+                                if (ok) {
+                                    saveSuccess = true
+                                    val updated = item.copy(
+                                        status = editStatus,
+                                        markupPoints = markupPts ?: item.markupPoints
+                                    )
+                                    onItemUpdated(updated)
+                                } else {
+                                    saveError = errMsg.ifBlank { "Failed to update. Please try again." }
+                                }
+                            }
+                        },
+                        enabled = !isSaving && !saveSuccess,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = DarkGreen)
+                    ) {
+                        if (isSaving) {
+                            CircularProgressIndicator(color = Color.White,
+                                modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        } else {
+                            Icon(Icons.Filled.Save, null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Save Changes", fontWeight = FontWeight.SemiBold, color = Color.White)
+                        }
+                    }
+
+                    Spacer(Modifier.height(16.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EditItemPageForList(
+    item: Item,
+    token: String,
+    onBack: () -> Unit,
+    onItemUpdated: (ChatItem) -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    var currentImageIndex by remember { mutableStateOf(0) }
+    var editStatus by remember { mutableStateOf(item.status) }
+    var editMarkupPoints by remember { mutableStateOf(item.markupPoints.toString()) }
+    var isSaving by remember { mutableStateOf(false) }
+    var saveError by remember { mutableStateOf<String?>(null) }
+    var saveSuccess by remember { mutableStateOf(false) }
+
+    BackHandler(onBack = onBack)
+
+    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            // ── Top bar ────────────────────────────────────────────────────────
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Brush.verticalGradient(listOf(DarkGreen, DarkGreenLight)))
+            ) {
+                Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Filled.ArrowBack, "Back", tint = Color.White)
+                    }
+                    Text(
+                        "Edit Item",
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+            // ── Scrollable content ──────────────────────────────────────────────
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+            ) {
+                // Photo viewer
+                if (item.photos.isNotEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(300.dp)
+                    ) {
+                        AsyncImage(
+                            model = item.photos[currentImageIndex],
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                        if (item.photos.size > 1) {
+                            Surface(
+                                modifier = Modifier
+                                    .align(Alignment.BottomEnd)
+                                    .padding(10.dp),
+                                color = Color.Black.copy(alpha = 0.55f),
+                                shape = RoundedCornerShape(50)
+                            ) {
+                                Text(
+                                    "${currentImageIndex + 1} / ${item.photos.size}",
+                                    color = Color.White,
+                                    fontSize = 11.sp,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
+                    }
+                    // Thumbnail strip
+                    if (item.photos.size > 1) {
+                        LazyRow(
+                            contentPadding = PaddingValues(12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            itemsIndexed(item.photos) { index, url ->
+                                AsyncImage(
+                                    model = url,
+                                    contentDescription = null,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier
+                                        .size(64.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .border(
+                                            width = if (index == currentImageIndex) 2.dp else 1.dp,
+                                            color = if (index == currentImageIndex) DarkGreen
+                                                    else MaterialTheme.colorScheme.outlineVariant,
+                                            shape = RoundedCornerShape(8.dp)
+                                        )
+                                        .clickable { currentImageIndex = index }
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(220.dp)
+                            .background(MaterialTheme.colorScheme.surfaceVariant),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Filled.Photo, null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                            modifier = Modifier.size(64.dp)
+                        )
+                    }
+                }
+                // Editable info section
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(item.title, fontWeight = FontWeight.Bold, fontSize = 22.sp)
+
+                    // Status field (editable)
+                    Text("Status", fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    OutlinedTextField(
+                        value = editStatus,
+                        onValueChange = { editStatus = it; saveError = null },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp),
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = DarkGreen,
+                            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
+                        )
+                    )
+
+                    // Markup Points field (editable only if status is private or acquired)
+                    val canEditMarkup = item.status.lowercase() == "private" ||
+                                       item.status.lowercase() == "acquired"
+                    if (canEditMarkup) {
+                        Text("Markup Points", fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        OutlinedTextField(
+                            value = editMarkupPoints,
+                            onValueChange = { editMarkupPoints = it; saveError = null },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(10.dp),
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = DarkGreen,
+                                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
+                            )
+                        )
+                    }
+
+                    HorizontalDivider()
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(Icons.Filled.Person, null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(18.dp))
+                        Text(item.sellerEmail, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    if (item.description.isNotBlank()) {
+                        HorizontalDivider()
+                        Text("Description", fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                        Text(item.description, fontSize = 14.sp, lineHeight = 22.sp)
+                    }
+
+                    HorizontalDivider()
+
+                    // Save and error messages
+                    saveError?.let {
+                        Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                    }
+                    if (saveSuccess) {
+                        Row(verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Icon(Icons.Filled.CheckCircle, null,
+                                tint = DarkGreen, modifier = Modifier.size(14.dp))
+                            Text("Item updated!", color = DarkGreen, fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+
+                    // Save button
+                    Button(
+                        onClick = {
+                            saveError = null
+                            if (editStatus.isBlank()) {
+                                saveError = "Status cannot be empty."
+                                return@Button
+                            }
+                            val markupPts = editMarkupPoints.toIntOrNull()
+                            if (canEditMarkup && editMarkupPoints.isNotBlank() && markupPts == null) {
+                                saveError = "Markup points must be a valid number."
+                                return@Button
+                            }
+                            scope.launch {
+                                isSaving = true
+                                val (ok, errMsg) = withContext(Dispatchers.IO) {
+                                    updateAdminItem(
+                                        token,
+                                        item.itemId,
+                                        status = editStatus,
+                                        markupPoints = if (canEditMarkup) markupPts else null
+                                    )
+                                }
+                                isSaving = false
+                                if (ok) {
+                                    saveSuccess = true
+                                    // Convert Item to ChatItem and call onItemUpdated
+                                    val chatItem = ChatItem(
+                                        itemId = item.itemId,
+                                        title = item.title,
+                                        description = item.description,
+                                        markupPoints = markupPts ?: item.markupPoints,
+                                        sellerEmail = item.sellerEmail,
+                                        status = editStatus,
+                                        photos = item.photos
+                                    )
+                                    onItemUpdated(chatItem)
+                                } else {
+                                    saveError = errMsg.ifBlank { "Failed to update. Please try again." }
+                                }
+                            }
+                        },
+                        enabled = !isSaving && !saveSuccess,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = DarkGreen)
+                    ) {
+                        if (isSaving) {
+                            CircularProgressIndicator(color = Color.White,
+                                modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        } else {
+                            Icon(Icons.Filled.Save, null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Save Changes", fontWeight = FontWeight.SemiBold, color = Color.White)
+                        }
+                    }
+
+                    Spacer(Modifier.height(16.dp))
                 }
             }
         }
@@ -1824,14 +3619,16 @@ private fun AdminUsersContent(onMenuClick: () -> Unit) {
             "Pending"  -> students.filter { it.displayStatus == "pending" }
             "Approved" -> students.filter { it.displayStatus == "approved" }
             "Declined" -> students.filter { it.displayStatus == "declined" }
+            "Blocked"  -> students.filter { it.displayStatus == "blocked" }
             else       -> students
         }
     }
 
-    // Pre-compute counts once per students change — avoids 3x .count() on every recomposition
+    // Pre-compute counts once per students change — avoids 4x .count() on every recomposition
     val pendingCount  = remember(students) { students.count { it.displayStatus == "pending" } }
     val approvedCount = remember(students) { students.count { it.displayStatus == "approved" } }
     val declinedCount = remember(students) { students.count { it.displayStatus == "declined" } }
+    val blockedCount  = remember(students) { students.count { it.displayStatus == "blocked" } }
 
     // Student detail modal
     selectedStudent?.let { student ->
@@ -1850,7 +3647,7 @@ private fun AdminUsersContent(onMenuClick: () -> Unit) {
         AdminPageHeader(title = "User Management", onMenuClick = onMenuClick)
 
         // ── Filter chips ─────────────────────────────────────────────────────
-        val filters = listOf("All", "Pending", "Approved", "Declined")
+        val filters = listOf("All", "Pending", "Approved", "Declined", "Blocked")
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1864,6 +3661,7 @@ private fun AdminUsersContent(onMenuClick: () -> Unit) {
                     "Pending"  -> pendingCount
                     "Approved" -> approvedCount
                     "Declined" -> declinedCount
+                    "Blocked"  -> blockedCount
                     else       -> students.size
                 }
                 Box(
@@ -1908,7 +3706,8 @@ private fun AdminUsersContent(onMenuClick: () -> Unit) {
                     Text(
                         text = if (selectedFilter == "All") "No students found"
                                else "No ${selectedFilter.lowercase()} students",
-                        fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+                        fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center
                     )
                 }
 
@@ -1992,7 +3791,7 @@ private fun StudentCard(student: Student, onClick: () -> Unit) {
     }
 }
 
-// ── Student Detail Dialog ─────────────────────────────────────────────────────
+// ── Student Detail Page (full-screen) ─────────────────────────────────────────
 
 @Composable
 private fun StudentDetailDialog(
@@ -2006,8 +3805,9 @@ private fun StudentDetailDialog(
 
     var declineReason    by remember { mutableStateOf(student.reason ?: "") }
     var showDeclineInput by remember { mutableStateOf(false) }
+    var blockReason      by remember { mutableStateOf("") }
+    var showBlockInput   by remember { mutableStateOf(false) }
     var actionLoading    by remember { mutableStateOf(false) }
-    // Pair(isSuccess, message) — null means no dialog
     var resultDialog     by remember { mutableStateOf<Pair<Boolean, String>?>(null) }
     var showDocViewer    by remember { mutableStateOf(false) }
 
@@ -2050,7 +3850,6 @@ private fun StudentDetailDialog(
                         }
                     }
                 )
-                // Close button
                 IconButton(
                     onClick = { showDocViewer = false },
                     modifier = Modifier
@@ -2061,7 +3860,6 @@ private fun StudentDetailDialog(
                     Icon(Icons.Filled.Close, contentDescription = "Close",
                         tint = Color.White, modifier = Modifier.size(24.dp))
                 }
-                // Hint
                 Text(
                     "Pinch to zoom",
                     color = Color.White.copy(alpha = 0.6f),
@@ -2098,33 +3896,79 @@ private fun StudentDetailDialog(
         )
     }
 
+    // ── Full-screen page (Dialog that fills the whole screen) ─────────────────
     Dialog(
         onDismissRequest = { if (!actionLoading) onDismiss() },
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            dismissOnBackPress = true,
+            dismissOnClickOutside = false
+        )
     ) {
-        Card(
+        Box(
             modifier = Modifier
-                .fillMaxWidth(0.95f)
-                .wrapContentHeight()
-                .padding(vertical = 24.dp),
-            shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            elevation = CardDefaults.cardElevation(8.dp)
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
         ) {
-            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+            Column(modifier = Modifier.fillMaxSize()) {
 
-                // ── Header ────────────────────────────────────────────────────
-                Box(
-                    modifier = Modifier.fillMaxWidth()
+                // ── Top App Bar ───────────────────────────────────────────────
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
                         .background(Brush.verticalGradient(listOf(DarkGreen, DarkGreenLight)))
-                        .padding(20.dp)
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(end = 36.dp)) {  // leave room for X button
-                        // Profile picture — shimmer while loading
-                        Box(modifier = Modifier.size(64.dp).clip(CircleShape)
-                            .background(Color.White.copy(alpha = 0.2f))
-                            .border(2.dp, Color.White.copy(alpha = 0.5f), CircleShape)) {
+                    Spacer(modifier = Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
+                    Row(
+                        modifier = Modifier.fillMaxWidth().height(56.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(onClick = { if (!actionLoading) onDismiss() }) {
+                            Icon(Icons.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
+                        }
+                        Text(
+                            "Student Details",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Box(
+                            modifier = Modifier
+                                .padding(end = 16.dp)
+                                .clip(RoundedCornerShape(20.dp))
+                                .background(Color.White.copy(alpha = 0.2f))
+                                .padding(horizontal = 10.dp, vertical = 3.dp)
+                        ) {
+                            Text(
+                                student.displayStatus.replaceFirstChar { it.uppercaseChar() },
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color.White
+                            )
+                        }
+                    }
+                }
+
+                // ── Scrollable Content ────────────────────────────────────────
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    // ── Profile header ────────────────────────────────────────
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(DarkGreenLight.copy(alpha = 0.85f))
+                            .padding(horizontal = 20.dp, vertical = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier.size(64.dp).clip(CircleShape)
+                                .background(Color.White.copy(alpha = 0.2f))
+                                .border(2.dp, Color.White.copy(alpha = 0.5f), CircleShape)
+                        ) {
                             if (student.profilePicture != null) {
                                 SubcomposeAsyncImage(
                                     model = student.profilePicture,
@@ -2150,223 +3994,273 @@ private fun StudentDetailDialog(
                         Column {
                             Text(student.fullName, fontSize = 18.sp,
                                 fontWeight = FontWeight.Bold, color = Color.White)
-                            Text(student.email, fontSize = 13.sp, color = Color.White.copy(alpha = 0.85f))
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Box(modifier = Modifier.clip(RoundedCornerShape(20.dp))
-                                .background(Color.White.copy(alpha = 0.2f))
-                                .padding(horizontal = 10.dp, vertical = 3.dp)) {
-                                Text(student.displayStatus.replaceFirstChar { it.uppercaseChar() },
-                                    fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
-                                    color = Color.White)
-                            }
+                            Text(student.email, fontSize = 13.sp,
+                                color = Color.White.copy(alpha = 0.85f))
                         }
                     }
-                    // ── X close button ────────────────────────────────────────
-                    IconButton(
-                        onClick = { if (!actionLoading) onDismiss() },
-                        modifier = Modifier.align(Alignment.TopEnd).size(32.dp)
+
+                    // ── Info section ──────────────────────────────────────────
+                    Column(
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Icon(Icons.Filled.Close, contentDescription = "Close",
-                            tint = Color.White, modifier = Modifier.size(20.dp))
+                        Text("STUDENT INFORMATION", fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold, color = DarkGreen, letterSpacing = 1.sp)
+
+                        InfoRow(Icons.Filled.Badge,          "Verification ID", "#${student.studentVerificationId}")
+                        InfoRow(Icons.Filled.Person,         "Full Name",       student.fullName)
+                        InfoRow(Icons.Filled.Email,          "Email",           student.email)
+                        InfoRow(Icons.Filled.VerifiedUser,   "Verified",
+                            if (student.isVerified) "Yes ✓" else "No",
+                            valueColor = if (student.isVerified) Color(0xFF4CAF50) else MaterialTheme.colorScheme.onSurface)
+                        student.verificationType?.let {
+                            InfoRow(Icons.Filled.CreditCard, "ID Type",
+                                it.replace("_", " ").replaceFirstChar { c -> c.uppercaseChar() })
+                        }
+                        InfoRow(Icons.Filled.AccountBalanceWallet,
+                            "Wallet Points", "${student.walletPoints} pts")
+                        InfoRow(Icons.Filled.Circle, "Active",
+                            if (student.isActive) "Yes" else "No",
+                            valueColor = if (student.isActive) Color(0xFF4CAF50)
+                                         else MaterialTheme.colorScheme.onSurfaceVariant)
+                        InfoRow(Icons.Filled.CalendarToday, "Registered",
+                            formatDate(student.registeredDate))
+                        if (!student.reason.isNullOrBlank()) {
+                            InfoRow(Icons.Filled.Info, "Reason", student.reason,
+                                valueColor = MaterialTheme.colorScheme.error)
+                        }
                     }
-                }
 
-                // ── Info section ─────────────────────────────────────────────
-                Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)) {
-
-                    Text("STUDENT INFORMATION", fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold, color = DarkGreen, letterSpacing = 1.sp)
-
-                    InfoRow(Icons.Filled.Badge,          "Verification ID", "#${student.studentVerificationId}")
-                    InfoRow(Icons.Filled.Person,         "Full Name",       student.fullName)
-                    InfoRow(Icons.Filled.Email,          "Email",           student.email)
-                    InfoRow(Icons.Filled.VerifiedUser,   "Verified",
-                        if (student.isVerified) "Yes ✓" else "No",
-                        valueColor = if (student.isVerified) Color(0xFF4CAF50) else MaterialTheme.colorScheme.onSurface)
-                    student.verificationType?.let {
-                        InfoRow(Icons.Filled.CreditCard, "ID Type",
-                            it.replace("_", " ").replaceFirstChar { c -> c.uppercaseChar() })
-                    }
-                    InfoRow(Icons.Filled.AccountBalanceWallet,
-                        "Wallet Points",  "${student.walletPoints} pts")
-                    InfoRow(Icons.Filled.Circle, "Active",
-                        if (student.isActive) "Yes" else "No",
-                        valueColor = if (student.isActive) Color(0xFF4CAF50)
-                                     else MaterialTheme.colorScheme.onSurfaceVariant)
-                    InfoRow(Icons.Filled.CalendarToday, "Registered",
-                        formatDate(student.registeredDate))
-                    if (!student.reason.isNullOrBlank()) {
-                        InfoRow(Icons.Filled.Info, "Reason", student.reason,
-                            valueColor = MaterialTheme.colorScheme.error)
-                    }
-                }
-
-                // ── Verification document ────────────────────────────────────
-                student.verificationDocument?.let { docUrl ->
-                    Column(modifier = Modifier.padding(horizontal = 20.dp)
-                        .padding(bottom = 16.dp)) {
-                        Text("VERIFICATION DOCUMENT", fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold, color = DarkGreen,
-                            letterSpacing = 1.sp,
-                            modifier = Modifier.padding(bottom = 8.dp))
-                        Box(modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 160.dp, max = 280.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .clickable { showDocViewer = true }
+                    // ── Verification document ─────────────────────────────────
+                    student.verificationDocument?.let { docUrl ->
+                        Column(
+                            modifier = Modifier
+                                .padding(horizontal = 20.dp)
+                                .padding(bottom = 16.dp)
                         ) {
-                            SubcomposeAsyncImage(
-                                model = docUrl,
-                                contentDescription = "Verification Document",
-                                modifier = Modifier.fillMaxWidth().heightIn(min = 160.dp, max = 280.dp),
-                                contentScale = ContentScale.FillWidth,
-                                loading = {
-                                    ShimmerEffect(
-                                        Modifier.fillMaxWidth()
-                                            .height(200.dp)
-                                            .clip(RoundedCornerShape(12.dp))
-                                    )
-                                },
-                                error = {
-                                    Box(
-                                        modifier = Modifier.fillMaxWidth().height(120.dp)
-                                            .background(MaterialTheme.colorScheme.surfaceVariant),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                            Icon(Icons.Filled.BrokenImage, null,
-                                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                                                modifier = Modifier.size(36.dp))
-                                            Spacer(Modifier.height(4.dp))
-                                            Text("Could not load document", fontSize = 12.sp,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        }
-                                    }
-                                }
-                            )
-                            // Tap to zoom hint
+                            Text("VERIFICATION DOCUMENT", fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold, color = DarkGreen,
+                                letterSpacing = 1.sp,
+                                modifier = Modifier.padding(bottom = 8.dp))
                             Box(
                                 modifier = Modifier
-                                    .align(Alignment.BottomEnd)
-                                    .padding(8.dp)
-                                    .background(Color.Black.copy(alpha = 0.45f), RoundedCornerShape(6.dp))
-                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                                    .fillMaxWidth()
+                                    .heightIn(min = 160.dp, max = 280.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable { showDocViewer = true }
                             ) {
-                                Text("Tap to zoom", fontSize = 11.sp, color = Color.White)
+                                SubcomposeAsyncImage(
+                                    model = docUrl,
+                                    contentDescription = "Verification Document",
+                                    modifier = Modifier.fillMaxWidth().heightIn(min = 160.dp, max = 280.dp),
+                                    contentScale = ContentScale.FillWidth,
+                                    loading = {
+                                        ShimmerEffect(
+                                            Modifier.fillMaxWidth()
+                                                .height(200.dp)
+                                                .clip(RoundedCornerShape(12.dp))
+                                        )
+                                    },
+                                    error = {
+                                        Box(
+                                            modifier = Modifier.fillMaxWidth().height(120.dp)
+                                                .background(MaterialTheme.colorScheme.surfaceVariant),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                                Icon(Icons.Filled.BrokenImage, null,
+                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                                    modifier = Modifier.size(36.dp))
+                                                Spacer(Modifier.height(4.dp))
+                                                Text("Could not load document", fontSize = 12.sp,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            }
+                                        }
+                                    }
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.BottomEnd)
+                                        .padding(8.dp)
+                                        .background(Color.Black.copy(alpha = 0.45f), RoundedCornerShape(6.dp))
+                                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                                ) {
+                                    Text("Tap to zoom", fontSize = 11.sp, color = Color.White)
+                                }
                             }
                         }
                     }
-                }
 
-                HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp),
-                    color = MaterialTheme.colorScheme.outlineVariant)
-
-                // ── Decline reason input ─────────────────────────────────────
-                if (showDeclineInput) {
-                    OutlinedTextField(
-                        value = declineReason,
-                        onValueChange = { declineReason = it },
-                        label = { Text("Reason for declining") },
-                        placeholder = { Text("Enter reason (optional)") },
-                        modifier = Modifier.fillMaxWidth()
-                            .padding(horizontal = 20.dp, vertical = 8.dp),
-                        shape = RoundedCornerShape(12.dp),
-                        maxLines = 3
+                    HorizontalDivider(
+                        modifier = Modifier.padding(horizontal = 20.dp),
+                        color = MaterialTheme.colorScheme.outlineVariant
                     )
-                }
 
-                // ── Action buttons ───────────────────────────────────────────
-                Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // ── Decline reason input ──────────────────────────────────
+                    if (showDeclineInput) {
+                        OutlinedTextField(
+                            value = declineReason,
+                            onValueChange = { declineReason = it },
+                            label = { Text("Reason for declining") },
+                            placeholder = { Text("Enter reason (optional)") },
+                            modifier = Modifier.fillMaxWidth()
+                                .padding(horizontal = 20.dp, vertical = 8.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            maxLines = 3
+                        )
+                    }
 
-                    if (actionLoading) {
-                        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                            CircularProgressIndicator(color = DarkGreen, modifier = Modifier.size(32.dp))
-                        }
-                    } else {
-                        // Approve button — show when student is not already approved
-                        if (student.displayStatus != "approved") {
-                            Button(
-                                onClick = {
-                                    if (token == null) return@Button
-                                    showDeclineInput = false
-                                    scope.launch {
-                                        actionLoading = true
-                                        val ok = withContext(Dispatchers.IO) {
-                                            updateStudentStatus(token, student.userId, "approve")
-                                        }
-                                        actionLoading = false
-                                        resultDialog = if (ok)
-                                            Pair(true, "Student has been approved successfully.")
-                                        else
-                                            Pair(false, "Approval failed. Please try again.")
-                                    }
-                                },
-                                modifier = Modifier.fillMaxWidth().height(48.dp),
-                                shape = RoundedCornerShape(12.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50))
-                            ) {
-                                Icon(Icons.Filled.CheckCircle, null,
-                                    modifier = Modifier.size(18.dp).padding(end = 4.dp))
-                                Text("Approve", fontWeight = FontWeight.SemiBold, color = Color.White)
+                    // ── Block reason input ────────────────────────────────────
+                    if (showBlockInput) {
+                        OutlinedTextField(
+                            value = blockReason,
+                            onValueChange = { blockReason = it },
+                            label = { Text("Reason for blocking") },
+                            placeholder = { Text("Enter reason for blocking this student") },
+                            modifier = Modifier.fillMaxWidth()
+                                .padding(horizontal = 20.dp, vertical = 8.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            maxLines = 3
+                        )
+                    }
+
+                    // ── Action buttons ────────────────────────────────────────
+                    Column(
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        if (actionLoading) {
+                            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                                CircularProgressIndicator(color = DarkGreen, modifier = Modifier.size(32.dp))
                             }
-                        }
-
-                        // Decline button — show when student is not already declined
-                        if (student.displayStatus != "declined") {
-                            if (!showDeclineInput) {
-                                OutlinedButton(
-                                    onClick = { showDeclineInput = true },
-                                    modifier = Modifier.fillMaxWidth().height(48.dp),
-                                    shape = RoundedCornerShape(12.dp),
-                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFF44336)),
-                                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFF44336))
-                                ) {
-                                    Icon(Icons.Filled.Cancel, null,
-                                        modifier = Modifier.size(18.dp).padding(end = 4.dp))
-                                    Text("Decline", fontWeight = FontWeight.SemiBold)
-                                }
-                            } else {
+                        } else {
+                            // Approve — shown when not already approved
+                            if (student.displayStatus != "approved") {
                                 Button(
                                     onClick = {
                                         if (token == null) return@Button
+                                        showDeclineInput = false
+                                        showBlockInput = false
                                         scope.launch {
                                             actionLoading = true
                                             val ok = withContext(Dispatchers.IO) {
-                                                updateStudentStatus(
-                                                    token,
-                                                    student.userId,
-                                                    "decline",
-                                                    declineReason.trim().ifBlank { null }
-                                                )
+                                                updateStudentStatus(token, student.userId, "approve")
                                             }
                                             actionLoading = false
                                             resultDialog = if (ok)
-                                                Pair(true, "Student has been declined successfully.")
+                                                Pair(true, "Student has been approved successfully.")
                                             else
-                                                Pair(false, "Decline failed. Please try again.")
+                                                Pair(false, "Approval failed. Please try again.")
                                         }
                                     },
                                     modifier = Modifier.fillMaxWidth().height(48.dp),
                                     shape = RoundedCornerShape(12.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF44336))
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50))
                                 ) {
-                                    Icon(Icons.Filled.Cancel, null,
+                                    Icon(Icons.Filled.CheckCircle, null,
                                         modifier = Modifier.size(18.dp).padding(end = 4.dp))
-                                    Text("Confirm Decline", fontWeight = FontWeight.SemiBold, color = Color.White)
+                                    Text("Approve", fontWeight = FontWeight.SemiBold, color = Color.White)
+                                }
+                            }
+
+                            // Decline — shown when not already declined
+                            if (student.displayStatus != "declined") {
+                                if (!showDeclineInput) {
+                                    OutlinedButton(
+                                        onClick = { showDeclineInput = true; showBlockInput = false },
+                                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                                        shape = RoundedCornerShape(12.dp),
+                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFF44336)),
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFF44336))
+                                    ) {
+                                        Icon(Icons.Filled.Cancel, null,
+                                            modifier = Modifier.size(18.dp).padding(end = 4.dp))
+                                        Text("Decline", fontWeight = FontWeight.SemiBold)
+                                    }
+                                } else {
+                                    Button(
+                                        onClick = {
+                                            if (token == null) return@Button
+                                            scope.launch {
+                                                actionLoading = true
+                                                val ok = withContext(Dispatchers.IO) {
+                                                    updateStudentStatus(
+                                                        token,
+                                                        student.userId,
+                                                        "decline",
+                                                        declineReason.trim().ifBlank { null }
+                                                    )
+                                                }
+                                                actionLoading = false
+                                                resultDialog = if (ok)
+                                                    Pair(true, "Student has been declined successfully.")
+                                                else
+                                                    Pair(false, "Decline failed. Please try again.")
+                                            }
+                                        },
+                                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                                        shape = RoundedCornerShape(12.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF44336))
+                                    ) {
+                                        Icon(Icons.Filled.Cancel, null,
+                                            modifier = Modifier.size(18.dp).padding(end = 4.dp))
+                                        Text("Confirm Decline", fontWeight = FontWeight.SemiBold, color = Color.White)
+                                    }
+                                }
+                            }
+
+                            // Block — shown when not already blocked
+                            if (student.displayStatus != "blocked") {
+                                if (!showBlockInput) {
+                                    OutlinedButton(
+                                        onClick = { showBlockInput = true; showDeclineInput = false },
+                                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                                        shape = RoundedCornerShape(12.dp),
+                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF9C27B0)),
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF9C27B0))
+                                    ) {
+                                        Icon(Icons.Filled.Block, null,
+                                            modifier = Modifier.size(18.dp).padding(end = 4.dp))
+                                        Text("Block Student", fontWeight = FontWeight.SemiBold)
+                                    }
+                                } else {
+                                    Button(
+                                        onClick = {
+                                            if (token == null) return@Button
+                                            scope.launch {
+                                                actionLoading = true
+                                                val ok = withContext(Dispatchers.IO) {
+                                                    updateStudentStatus(token, student.userId, "block", blockReason.trim().ifBlank { null })
+                                                }
+                                                actionLoading = false
+                                                resultDialog = if (ok)
+                                                    Pair(true, "Student has been blocked successfully.")
+                                                else
+                                                    Pair(false, "Block failed. Please try again.")
+                                            }
+                                        },
+                                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                                        shape = RoundedCornerShape(12.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF9C27B0))
+                                    ) {
+                                        Icon(Icons.Filled.Block, null,
+                                            modifier = Modifier.size(18.dp).padding(end = 4.dp))
+                                        Text("Confirm Block", fontWeight = FontWeight.SemiBold, color = Color.White)
+                                    }
                                 }
                             }
                         }
+
+                        // Back / Close
+                        TextButton(
+                            onClick = { if (!actionLoading) onDismiss() },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Close", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     }
 
-                    // Close
-                    TextButton(
-                        onClick = { if (!actionLoading) onDismiss() },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Close", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
+                    Spacer(modifier = Modifier.height(32.dp))
                 }
             }
         }
@@ -2395,7 +4289,14 @@ private fun InfoRow(
 // ── Settings ───────────────────────────────────────────────────────────────────
 
 @Composable
-private fun AdminSettingsContent(isDarkMode: Boolean, onThemeToggle: () -> Unit, onMenuClick: () -> Unit) {
+fun AdminSettingsContent(
+    isDarkMode: Boolean,
+    onThemeToggle: () -> Unit,
+    onMenuClick: () -> Unit,
+    role: String = "Administrator",
+    favoritesCount: Int = 0,
+    onFavoritesClick: () -> Unit = {}
+) {
     val context = LocalContext.current
     val versionName = remember {
         try { context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "1.0" }
@@ -2403,7 +4304,7 @@ private fun AdminSettingsContent(isDarkMode: Boolean, onThemeToggle: () -> Unit,
     }
 
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        AdminPageHeader(title = "Settings", onMenuClick = onMenuClick)
+        AdminPageHeader(title = "Settings", onMenuClick = onMenuClick, favoritesCount = favoritesCount, onFavoritesClick = onFavoritesClick)
         Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
             SettingsSectionLabel("PREFERENCES")
             Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp),
@@ -2440,7 +4341,7 @@ private fun AdminSettingsContent(isDarkMode: Boolean, onThemeToggle: () -> Unit,
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 0.5.dp)
                     SettingsInfoRow(Icons.Filled.Info, "Version", "v$versionName")
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 0.5.dp)
-                    SettingsInfoRow(Icons.Filled.AdminPanelSettings, "Role", "Administrator")
+                    SettingsInfoRow(Icons.Filled.AdminPanelSettings, "Role", role)
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 0.5.dp)
                     SettingsInfoRow(Icons.Filled.School, "Institution", "Our Lady of Fatima University")
                 }
@@ -2470,7 +4371,7 @@ private fun SettingsInfoRow(icon: ImageVector, label: String, value: String) {
 // ── Profile ────────────────────────────────────────────────────────────────────
 
 @Composable
-private fun AdminProfileContent(
+fun AdminProfileContent(
     onMenuClick: () -> Unit,
     firstName: String,
     lastName: String,
@@ -2478,7 +4379,9 @@ private fun AdminProfileContent(
     role: String,
     walletPoints: Int,
     profilePic: String,
-    onProfilePicUpdated: (String) -> Unit
+    onProfilePicUpdated: (String) -> Unit,
+    favoritesCount: Int = 0,
+    onFavoritesClick: () -> Unit = {}
 ) {
     val context     = LocalContext.current
     val prefs       = remember { context.getSharedPreferences("fatimarket_prefs", 0) }
@@ -2553,7 +4456,7 @@ private fun AdminProfileContent(
                 .padding(bottom = 28.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            AdminPageHeader(title = "Profile", onMenuClick = onMenuClick)
+            AdminPageHeader(title = "Profile", onMenuClick = onMenuClick, favoritesCount = favoritesCount, onFavoritesClick = onFavoritesClick)
             Spacer(modifier = Modifier.height(8.dp))
 
             // Avatar with camera-icon overlay
@@ -2672,7 +4575,12 @@ private fun ProfileInfoRow(
 // ── Shared Page Header ─────────────────────────────────────────────────────────
 
 @Composable
-private fun AdminPageHeader(title: String, onMenuClick: () -> Unit) {
+fun AdminPageHeader(
+    title: String,
+    onMenuClick: () -> Unit,
+    favoritesCount: Int = 0,
+    onFavoritesClick: () -> Unit = {}
+) {
     val context = LocalContext.current
     val prefs   = remember { context.getSharedPreferences("fatimarket_prefs", 0) }
     val walletPoints = remember { prefs.getInt("user_wallet_points", 0) }
@@ -2709,12 +4617,179 @@ private fun AdminPageHeader(title: String, onMenuClick: () -> Unit) {
                     color = Color.White
                 )
             }
-            IconButton(onClick = { }) {
-                Icon(Icons.Filled.ChatBubbleOutline, "Messages", tint = Color.White)
+            Box {
+                IconButton(onClick = onFavoritesClick) {
+                    Icon(Icons.Outlined.FavoriteBorder, "Favorites", tint = Color.White)
+                }
+                if (favoritesCount > 0) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .offset(x = (-4).dp, y = 4.dp)
+                            .size(18.dp)
+                            .background(Color(0xFFFF4444), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text       = if (favoritesCount > 99) "99+" else favoritesCount.toString(),
+                            fontSize   = 8.sp,
+                            lineHeight = 8.sp,
+                            fontWeight = FontWeight.Bold,
+                            color      = Color.White,
+                            textAlign  = TextAlign.Center
+                        )
+                    }
+                }
             }
             IconButton(onClick = { }) {
                 Icon(Icons.Filled.NotificationsNone, "Notifications", tint = Color.White)
             }
         }
+    }
+}
+
+// ── Chat item network ──────────────────────────────────────────────────────────
+
+private fun fetchChatItem(token: String, itemId: Int): ChatItem? {
+    val request = Request.Builder()
+        .url("https://fati-api.alertaraqc.com/api/items/$itemId")
+        .header("Authorization", "Bearer $token")
+        .header("Accept", "application/json")
+        .get()
+        .build()
+    return try {
+        adminHttpClient.newCall(request).execute().use { response ->
+            val raw = response.body?.string() ?: return null
+            val json = JSONObject(raw)
+            val obj  = json.optJSONObject("data") ?: json
+            val photosArr = obj.optJSONArray("photos")
+            val photos = if (photosArr != null) {
+                (0 until photosArr.length()).map { j -> photosArr.getString(j) }
+            } else emptyList()
+            ChatItem(
+                itemId       = obj.optInt("item_id"),
+                title        = obj.optString("title"),
+                description  = obj.optString("description"),
+                markupPoints = obj.optInt("markup_points"),
+                sellerEmail  = obj.optString("seller_email"),
+                status       = obj.optString("status"),
+                photos       = photos
+            )
+        }
+    } catch (_: Exception) { null }
+}
+
+
+// Get all information of items base on status (admin endpoint — returns all users' items)
+private fun fetchItems(token: String, status: String): List<Item> {
+    val request = Request.Builder()
+        .url("https://fati-api.alertaraqc.com/api/admin/items?status=$status")
+        .header("Authorization", "Bearer $token")
+        .header("Accept", "application/json")
+        .get()
+        .build()
+    adminHttpClient.newCall(request).execute().use { response ->
+        val raw = response.body?.string() ?: return emptyList()
+        if (!response.isSuccessful) throw Exception("HTTP ${response.code}: $raw")
+        return try {
+            val json = JSONObject(raw)
+            // handle both {"data":[...]} and a bare array
+            val arr = when {
+                json.has("data") -> json.getJSONArray("data")
+                else             -> org.json.JSONArray(raw)
+            }
+            (0 until arr.length()).map { i ->
+                val obj       = arr.getJSONObject(i)
+                val photosArr = obj.optJSONArray("photos")
+                val photos    = if (photosArr != null) {
+                    (0 until photosArr.length()).map { j -> photosArr.getString(j) }
+                } else emptyList()
+                Item(
+                    itemId       = obj.optInt("item_id"),
+                    sellerId     = obj.optInt("seller_id"),
+                    sellerEmail  = obj.optString("seller_email"),
+                    title        = obj.optString("title"),
+                    description  = obj.optString("description"),
+                    categoryId   = obj.optInt("category_id"),
+                    pricePoints  = obj.optInt("price_points"),
+                    markupPoints = obj.optInt("markup_points"),
+                    status       = obj.optString("status"),
+                    photos       = photos,
+                    createdAt    = obj.optString("created_at")
+                )
+            }
+        } catch (e: Exception) { throw Exception("Parse error: ${e.message}") }
+    }
+}
+
+private fun updateItemStatus(token: String, itemId: Int, status: String): Pair<Boolean, String> {
+    val body = MultipartBody.Builder()
+        .setType(MultipartBody.FORM)
+        .addFormDataPart("_method", "PUT")
+        .addFormDataPart("status", status)
+        .build()
+    val request = Request.Builder()
+        .url("https://fati-api.alertaraqc.com/api/items/$itemId")
+        .header("Authorization", "Bearer $token")
+        .header("Accept", "application/json")
+        .post(body)
+        .build()
+    return try {
+        adminHttpClient.newCall(request).execute().use { response ->
+            val raw = response.body?.string() ?: ""
+            if (response.isSuccessful) {
+                Pair(true, "")
+            } else {
+                val msg = try {
+                    val json = JSONObject(raw)
+                    json.optString("message", "HTTP ${response.code}")
+                } catch (_: Exception) {
+                    "HTTP ${response.code}"
+                }
+                Pair(false, msg)
+            }
+        }
+    } catch (e: Exception) {
+        Pair(false, e.message ?: "Network error")
+    }
+}
+
+// Update item for admin with status and/or markup_points
+private fun updateAdminItem(token: String, itemId: Int, status: String? = null, markupPoints: Int? = null): Pair<Boolean, String> {
+    val body = MultipartBody.Builder()
+        .setType(MultipartBody.FORM)
+        .addFormDataPart("_method", "PUT")
+
+    if (status != null) {
+        body.addFormDataPart("status", status)
+    }
+    if (markupPoints != null) {
+        body.addFormDataPart("markup_points", markupPoints.toString())
+    }
+
+    val request = Request.Builder()
+        .url("https://fati-api.alertaraqc.com/api/admin/items/$itemId")
+        .header("Authorization", "Bearer $token")
+        .header("Accept", "application/json")
+        .post(body.build())
+        .build()
+
+    return try {
+        adminHttpClient.newCall(request).execute().use { response ->
+            val raw = response.body?.string() ?: ""
+            if (response.isSuccessful) {
+                Pair(true, "")
+            } else {
+                val msg = try {
+                    val json = JSONObject(raw)
+                    json.optString("message", "HTTP ${response.code}")
+                } catch (_: Exception) {
+                    "HTTP ${response.code}"
+                }
+                Pair(false, msg)
+            }
+        }
+    } catch (e: Exception) {
+        Pair(false, e.message ?: "Network error")
     }
 }
