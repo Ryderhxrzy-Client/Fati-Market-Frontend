@@ -5,7 +5,9 @@
       "Bash(pip install:*)",
       "Bash(powershell:*)",
       "WebFetch(domain:emojihub.yurace.pro)",
-      "mcp__ide__getDiagnostics"
+      "mcp__ide__getDiagnostics",
+      "Bash($content =:*)",
+      "Bash(./gradlew compileDebugKotlin:*)"
     ]
   }
 }
