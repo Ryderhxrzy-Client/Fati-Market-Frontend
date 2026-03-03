@@ -72,7 +72,7 @@ fun SplashScreen(navController: NavController, destination: String = "login") {
             }
 
             Text(
-                text = "Fati-Market ni Ofelia",
+                text = "Fati-Market",
                 color = Color.White,
                 fontSize = 26.sp,
                 fontWeight = FontWeight.Bold,
