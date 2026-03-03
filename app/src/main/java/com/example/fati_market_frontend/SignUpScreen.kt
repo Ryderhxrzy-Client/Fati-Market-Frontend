@@ -145,7 +145,7 @@ fun SignUpScreen(navController: NavController) {
                     )
                 }
                 Text(
-                    text = "Fati-Market ni Ofelia",
+                    text = "Fati-Market",
                     color = Color.White,
                     fontSize = 26.sp,
                     fontWeight = FontWeight.Bold,
@@ -628,6 +628,22 @@ fun SignUpScreen(navController: NavController) {
                             }
                             if (password.length < 8) {
                                 errorMessage = "Password must be at least 8 characters"
+                                return@launch
+                            }
+                            if (!password.any { it.isDigit() }) {
+                                errorMessage = "Password must contain at least one number"
+                                return@launch
+                            }
+                            if (!password.any { it.isUpperCase() }) {
+                                errorMessage = "Password must contain at least one uppercase letter"
+                                return@launch
+                            }
+                            if (!password.any { it.isLowerCase() }) {
+                                errorMessage = "Password must contain at least one lowercase letter"
+                                return@launch
+                            }
+                            if (!password.any { !it.isLetterOrDigit() }) {
+                                errorMessage = "Password must contain at least one symbol (!@#\$%^&* etc.)"
                                 return@launch
                             }
                             if (password != confirmPassword) {
