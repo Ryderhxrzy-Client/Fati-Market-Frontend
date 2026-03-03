@@ -31,7 +31,12 @@ fun AppNavigation(isDarkMode: Boolean, onThemeToggle: () -> Unit) {
                 val token     = prefs.getString("auth_token", null)
                 val loginTime = prefs.getLong("login_timestamp", 0L)
                 val elapsed   = System.currentTimeMillis() - loginTime
-                if (token != null && elapsed < SESSION_DURATION_MS) "admin_home" else "login"
+                val role      = prefs.getString("user_role", "admin") ?: "admin"
+                if (token != null && elapsed < SESSION_DURATION_MS) {
+                    if (role == "admin") "admin_home" else "student_home"
+                } else {
+                    "login"
+                }
             }
             SplashScreen(navController, destination = destination)
         }
@@ -46,6 +51,18 @@ fun AppNavigation(isDarkMode: Boolean, onThemeToggle: () -> Unit) {
         }
         composable("admin_home") {
             AdminDashboard(
+                isDarkMode = isDarkMode,
+                onThemeToggle = onThemeToggle,
+                onLogout = {
+                    context.getSharedPreferences("fatimarket_prefs", 0).edit().clear().apply()
+                    navController.navigate("login") {
+                        popUpTo(0) { inclusive = true }
+                    }
+                }
+            )
+        }
+        composable("student_home") {
+            StudentDashboard(
                 isDarkMode = isDarkMode,
                 onThemeToggle = onThemeToggle,
                 onLogout = {
