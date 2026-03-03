@@ -93,7 +93,7 @@ fun LoginScreen(navController: NavController) {
                     )
                 }
                 Text(
-                    text = "Fati-Market ni Ofelia",
+                    text = "Fati-Market",
                     color = Color.White,
                     fontSize = 26.sp,
                     fontWeight = FontWeight.Bold,
