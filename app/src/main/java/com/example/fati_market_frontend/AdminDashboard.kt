@@ -436,6 +436,8 @@ fun AdminDashboard(isDarkMode: Boolean, onThemeToggle: () -> Unit, onLogout: () 
     val scope             = rememberCoroutineScope()
     val openDrawer: () -> Unit = { scope.launch { drawerState.open() } }
 
+    val providesBottomBar = LocalProvidesBottomBar.current
+
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
@@ -470,7 +472,7 @@ fun AdminDashboard(isDarkMode: Boolean, onThemeToggle: () -> Unit, onLogout: () 
         val chatIsOpen = selectedTab == AdminTab.CHAT && chatConversation != null
         Scaffold(
             bottomBar = {
-                if (!chatIsOpen) {
+                if (!chatIsOpen && providesBottomBar) {
                     AdminBottomBar(
                         selected       = selectedTab,
                         userProfilePic = userProfilePic,
@@ -777,8 +779,28 @@ private fun DrawerPageContent(page: DrawerPage, onMenuClick: () -> Unit, onGoToC
     }
 }
 
-// ── Private Offers ─────────────────────────────────────────────────────────────
+private enum class ItemStatus(val displayName: String) {
+    PRIVATE("private"),
+    ACQUIRED("acquired"),
+    PUBLIC("public"),
+    RESERVED("reserved"),
+    SOLD("sold");
+    
+    companion object {
+        fun fromString(value: String): ItemStatus {
+            return when (value.lowercase()) {
+                "private" -> PRIVATE
+                "acquired" -> ACQUIRED
+                "public" -> PUBLIC
+                "reserved" -> RESERVED
+                "sold" -> SOLD
+                else -> PRIVATE
+            }
+        }
+    }
+}
 
+// ── Private Offers ─────────────────────────────────────────────────────────────
 @Composable
 private fun AdminPrivateOffersContent(onMenuClick: () -> Unit, onGoToChat: () -> Unit = {}) {
     val context = LocalContext.current
@@ -807,86 +829,93 @@ private fun AdminPrivateOffersContent(onMenuClick: () -> Unit, onGoToChat: () ->
 
     LaunchedEffect(Unit) { loadItems() }
 
-    AnimatedContent(
-        targetState = editingItem != null,
-        label = "EditItemTransition"
-    ) { isEditing ->
-        if (isEditing && editingItem != null) {
-            EditItemPageForList(
-                item = editingItem!!,
-                token = token,
-                onBack = { editingItem = null },
-                onItemUpdated = { updatedItem ->
-                    itemList = itemList.map {
-                        if (it.itemId == updatedItem.itemId) {
-                            it.copy(
-                                status = updatedItem.status,
-                                markupPoints = updatedItem.markupPoints
-                            )
-                        } else it
+    // Pass editing state up to hide bottom bar in AdminDashboard
+    CompositionLocalProvider(
+        LocalProvidesBottomBar provides (editingItem == null)
+    ) {
+        AnimatedContent(
+            targetState = editingItem != null,
+            label = "EditItemTransition"
+        ) { isEditing ->
+            if (isEditing && editingItem != null) {
+                EditItemPageForList(
+                    item = editingItem!!,
+                    token = token,
+                    onBack = { editingItem = null },
+                    onItemUpdated = { updatedItem ->
+                        itemList = itemList.map {
+                            if (it.itemId == updatedItem.itemId) {
+                                it.copy(
+                                    status = updatedItem.status,
+                                    markupPoints = updatedItem.markupPoints
+                                )
+                            } else it
+                        }
+                        editingItem = null
                     }
-                    editingItem = null
-                }
-            )
-        } else {
-            Column(modifier = Modifier.fillMaxSize()) {
-                AdminPageHeader(title = "Private Offers", onMenuClick = onMenuClick)
+                )
+            } else {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    AdminPageHeader(title = "Private Offers", onMenuClick = onMenuClick)
 
-                when {
-                    isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(color = DarkGreen)
-                    }
-                    errorMessage != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(12.dp),
-                            modifier = Modifier.padding(horizontal = 24.dp)
-                        ) {
-                            Icon(Icons.Filled.ErrorOutline, null,
-                                tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(48.dp))
-                            Text(errorMessage ?: "", color = MaterialTheme.colorScheme.error)
-                            Button(onClick = { loadItems() },
-                                colors = ButtonDefaults.buttonColors(containerColor = DarkGreen)) {
-                                Text("Retry", color = Color.White)
+                    when {
+                        isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(color = DarkGreen)
+                        }
+                        errorMessage != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(12.dp),
+                                modifier = Modifier.padding(horizontal = 24.dp)
+                            ) {
+                                Icon(Icons.Filled.ErrorOutline, null,
+                                    tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(48.dp))
+                                Text(errorMessage ?: "", color = MaterialTheme.colorScheme.error)
+                                Button(onClick = { loadItems() },
+                                    colors = ButtonDefaults.buttonColors(containerColor = DarkGreen)) {
+                                    Text("Retry", color = Color.White)
+                                }
                             }
                         }
-                    }
-                    itemList.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        itemList.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(Icons.Filled.Inventory2, null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(64.dp))
+                                Text("No private offers at the moment.",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                        else -> LazyColumn(
+                            modifier            = Modifier.fillMaxSize(),
+                            contentPadding      = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            Icon(Icons.Filled.Inventory2, null,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(64.dp))
-                            Text("No private offers at the moment.",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            items(itemList, key = { it.itemId }) { item ->
+                                AdminPrivateOfferCard(
+                                    item          = item,
+                                    token         = token,
+                                    onStatusSaved = { newStatus ->
+                                        itemList = itemList.map {
+                                            if (it.itemId == item.itemId) it.copy(status = newStatus) else it
+                                        }
+                                    },
+                                    onGoToChat    = onGoToChat,
+                                    onEditClick   = { editingItem = it }
+                                )
+                            }
+                            item { Spacer(Modifier.height(8.dp)) }
                         }
-                    }
-                    else -> LazyColumn(
-                        modifier            = Modifier.fillMaxSize(),
-                        contentPadding      = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        items(itemList, key = { it.itemId }) { item ->
-                            AdminPrivateOfferCard(
-                                item          = item,
-                                token         = token,
-                                onStatusSaved = { newStatus ->
-                                    itemList = itemList.map {
-                                        if (it.itemId == item.itemId) it.copy(status = newStatus) else it
-                                    }
-                                },
-                                onGoToChat    = onGoToChat,
-                                onEditClick   = { editingItem = it }
-                            )
-                        }
-                        item { Spacer(Modifier.height(8.dp)) }
                     }
                 }
             }
         }
     }
 }
+
+private val LocalProvidesBottomBar = compositionLocalOf { true }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -3248,8 +3277,17 @@ private fun EditItemPageForList(
 ) {
     val scope = rememberCoroutineScope()
     var currentImageIndex by remember { mutableStateOf(0) }
+    
+    // Status dropdown
+    var expanded by remember { mutableStateOf(false) }
     var editStatus by remember { mutableStateOf(item.status) }
+    val statusOptions = listOf("private", "acquired", "public", "reserved", "sold")
+    
+    // Markup points - editable only for private/acquired
     var editMarkupPoints by remember { mutableStateOf(item.markupPoints.toString()) }
+    val canEditMarkup = item.status.lowercase() == "private" || 
+                       item.status.lowercase() == "acquired"
+    
     var isSaving by remember { mutableStateOf(false) }
     var saveError by remember { mutableStateOf<String?>(null) }
     var saveSuccess by remember { mutableStateOf(false) }
@@ -3283,13 +3321,14 @@ private fun EditItemPageForList(
                     )
                 }
             }
+            
             // ── Scrollable content ──────────────────────────────────────────────
             Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .verticalScroll(rememberScrollState())
             ) {
-                // Photo viewer
+                // Photo viewer (same as before)
                 if (item.photos.isNotEmpty()) {
                     Box(
                         modifier = Modifier
@@ -3359,6 +3398,7 @@ private fun EditItemPageForList(
                         )
                     }
                 }
+                
                 // Editable info section
                 Column(
                     modifier = Modifier
@@ -3368,27 +3408,88 @@ private fun EditItemPageForList(
                 ) {
                     Text(item.title, fontWeight = FontWeight.Bold, fontSize = 22.sp)
 
-                    // Status field (editable)
+                    // Price Points - NON-EDITABLE (display only)
+                    Text("Price Points", fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                        ),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Filled.MonetizationOn, null,
+                                tint = DarkGreen, modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                "${item.pricePoints} pts",
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = DarkGreen
+                            )
+                        }
+                    }
+
+                    // Status field (dropdown)
                     Text("Status", fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    OutlinedTextField(
-                        value = editStatus,
-                        onValueChange = { editStatus = it; saveError = null },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(10.dp),
-                        singleLine = true,
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = DarkGreen,
-                            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
+                    
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        OutlinedTextField(
+                            value = editStatus,
+                            onValueChange = {},
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { expanded = true },
+                            readOnly = true,
+                            shape = RoundedCornerShape(10.dp),
+                            singleLine = true,
+                            trailingIcon = {
+                                Icon(
+                                    if (expanded) Icons.Filled.ArrowDropUp else Icons.Filled.ArrowDropDown,
+                                    "Select status",
+                                    tint = DarkGreen
+                                )
+                            },
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = DarkGreen,
+                                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
+                                disabledTextColor = MaterialTheme.colorScheme.onSurface
+                            )
                         )
-                    )
+                        
+                        DropdownMenu(
+                            expanded = expanded,
+                            onDismissRequest = { expanded = false },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            statusOptions.forEach { status ->
+                                DropdownMenuItem(
+                                    text = { 
+                                        Text(
+                                            status.replaceFirstChar { it.uppercaseChar() },
+                                            fontWeight = if (status == editStatus) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                    },
+                                    onClick = { 
+                                        editStatus = status
+                                        expanded = false
+                                        saveError = null
+                                    }
+                                )
+                            }
+                        }
+                    }
 
                     // Markup Points field (editable only if status is private or acquired)
-                    val canEditMarkup = item.status.lowercase() == "private" ||
-                                       item.status.lowercase() == "acquired"
+                    Text("Markup Points", fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    
                     if (canEditMarkup) {
-                        Text("Markup Points", fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
                         OutlinedTextField(
                             value = editMarkupPoints,
                             onValueChange = { editMarkupPoints = it; saveError = null },
@@ -3401,9 +3502,33 @@ private fun EditItemPageForList(
                                 unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
                             )
                         )
+                    } else {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                            ),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Filled.TrendingUp, null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(20.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    editMarkupPoints,
+                                    fontSize = 16.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
                     }
 
                     HorizontalDivider()
+                    
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -3413,6 +3538,7 @@ private fun EditItemPageForList(
                             modifier = Modifier.size(18.dp))
                         Text(item.sellerEmail, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
+                    
                     if (item.description.isNotBlank()) {
                         HorizontalDivider()
                         Text("Description", fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
