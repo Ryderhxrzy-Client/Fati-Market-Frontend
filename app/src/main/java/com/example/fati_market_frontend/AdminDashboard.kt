@@ -436,7 +436,6 @@ fun AdminDashboard(isDarkMode: Boolean, onThemeToggle: () -> Unit, onLogout: () 
     val scope             = rememberCoroutineScope()
     val openDrawer: () -> Unit = { scope.launch { drawerState.open() } }
 
-    val providesBottomBar = LocalProvidesBottomBar.current
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -472,7 +471,10 @@ fun AdminDashboard(isDarkMode: Boolean, onThemeToggle: () -> Unit, onLogout: () 
         val chatIsOpen = selectedTab == AdminTab.CHAT && chatConversation != null
         Scaffold(
             bottomBar = {
-                if (!chatIsOpen && providesBottomBar) {
+                // Read inside the lambda so it picks up any CompositionLocalProvider
+                // set by composables inside the content slot (e.g. DrawerPageContent)
+                val showBottomBar = LocalProvidesBottomBar.current
+                if (!chatIsOpen && showBottomBar) {
                     AdminBottomBar(
                         selected       = selectedTab,
                         userProfilePic = userProfilePic,
@@ -488,10 +490,11 @@ fun AdminDashboard(isDarkMode: Boolean, onThemeToggle: () -> Unit, onLogout: () 
             contentWindowInsets = WindowInsets(0),
             containerColor = MaterialTheme.colorScheme.background
         ) { innerPadding ->
+            val showBottomBar = LocalProvidesBottomBar.current
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(bottom = if (chatIsOpen) 0.dp else innerPadding.calculateBottomPadding())
+                    .padding(bottom = if (chatIsOpen || !showBottomBar) 0.dp else innerPadding.calculateBottomPadding())
             ) {
                 if (drawerPage != null) {
                     DrawerPageContent(
@@ -3014,6 +3017,7 @@ private fun ChatItemDetailPage(item: ChatItem, onBack: () -> Unit) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun EditItemPage(
     item: ChatItem,
@@ -3023,11 +3027,26 @@ private fun EditItemPage(
 ) {
     val scope = rememberCoroutineScope()
     var currentImageIndex by remember { mutableStateOf(0) }
+
+    // Status dropdown
+    var expanded by remember { mutableStateOf(false) }
     var editStatus by remember { mutableStateOf(item.status) }
+    val statusOptions = listOf("private", "acquired", "public", "reserved", "sold")
+
+    // Markup points - editable only if CURRENTLY SELECTED status is private/acquired
     var editMarkupPoints by remember { mutableStateOf(item.markupPoints.toString()) }
+    val canEditMarkup = editStatus.lowercase() == "private" ||
+                       editStatus.lowercase() == "acquired"
+
     var isSaving by remember { mutableStateOf(false) }
     var saveError by remember { mutableStateOf<String?>(null) }
     var saveSuccess by remember { mutableStateOf(false) }
+    // Dialog state
+    var showSuccessDialog by remember { mutableStateOf(false) }
+    var showErrorDialog   by remember { mutableStateOf(false) }
+    var dialogErrorMsg    by remember { mutableStateOf("") }
+    // Holds updated item until user dismisses the success dialog
+    var savedChatItem     by remember { mutableStateOf<ChatItem?>(null) }
 
     BackHandler(onBack = onBack)
 
@@ -3143,27 +3162,85 @@ private fun EditItemPage(
                 ) {
                     Text(item.title, fontWeight = FontWeight.Bold, fontSize = 22.sp)
 
-                    // Status field (editable)
+                    // Price Points - NON-EDITABLE (display only)
+                    Text("Price Points", fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                        ),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Filled.MonetizationOn, null,
+                                tint = DarkGreen, modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                "${item.markupPoints} pts",
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = DarkGreen
+                            )
+                        }
+                    }
+
+                    // Status field (dropdown)
                     Text("Status", fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    OutlinedTextField(
-                        value = editStatus,
-                        onValueChange = { editStatus = it; saveError = null },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(10.dp),
-                        singleLine = true,
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = DarkGreen,
-                            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
-                        )
-                    )
 
-                    // Markup Points field (editable only if status is private or acquired)
-                    val canEditMarkup = item.status.lowercase() == "private" ||
-                                       item.status.lowercase() == "acquired"
+                    ExposedDropdownMenuBox(
+                        expanded = expanded,
+                        onExpandedChange = { expanded = !expanded },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        OutlinedTextField(
+                            value = editStatus.replaceFirstChar { it.uppercaseChar() },
+                            onValueChange = {},
+                            modifier = Modifier
+                                .menuAnchor()
+                                .fillMaxWidth(),
+                            readOnly = true,
+                            shape = RoundedCornerShape(10.dp),
+                            singleLine = true,
+                            trailingIcon = {
+                                ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
+                            },
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = DarkGreen,
+                                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
+                            )
+                        )
+                        ExposedDropdownMenu(
+                            expanded = expanded,
+                            onDismissRequest = { expanded = false }
+                        ) {
+                            statusOptions.forEach { status ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            status.replaceFirstChar { it.uppercaseChar() },
+                                            fontWeight = if (status == editStatus) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                    },
+                                    onClick = {
+                                        editStatus = status
+                                        expanded = false
+                                        saveError = null
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    // Markup Points field (editable only if SELECTED status is private or acquired)
+                    Text("Markup Points", fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+
                     if (canEditMarkup) {
-                        Text("Markup Points", fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
                         OutlinedTextField(
                             value = editMarkupPoints,
                             onValueChange = { editMarkupPoints = it; saveError = null },
@@ -3176,6 +3253,29 @@ private fun EditItemPage(
                                 unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
                             )
                         )
+                    } else {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                            ),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Filled.TrendingUp, null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(20.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    editMarkupPoints,
+                                    fontSize = 16.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
                     }
 
                     HorizontalDivider()
@@ -3196,18 +3296,71 @@ private fun EditItemPage(
 
                     HorizontalDivider()
 
-                    // Save and error messages
-                    saveError?.let {
-                        Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                    // ── Success Dialog ────────────────────────────────────────
+                    if (showSuccessDialog) {
+                        AlertDialog(
+                            onDismissRequest = { showSuccessDialog = false },
+                            icon = {
+                                Icon(
+                                    Icons.Filled.CheckCircle,
+                                    contentDescription = null,
+                                    tint = DarkGreen,
+                                    modifier = Modifier.size(36.dp)
+                                )
+                            },
+                            title = { Text("Success", fontWeight = FontWeight.Bold) },
+                            text = { Text("Item has been updated successfully.") },
+                            confirmButton = {
+                                Button(
+                                    onClick = {
+                                        showSuccessDialog = false
+                                        savedChatItem?.let { onItemUpdated(it) }
+                                        onBack()
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = DarkGreen),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text("Back", color = Color.White)
+                                }
+                            },
+                            dismissButton = {
+                                OutlinedButton(
+                                    onClick = { showSuccessDialog = false },
+                                    shape = RoundedCornerShape(8.dp),
+                                    border = BorderStroke(1.dp, DarkGreen)
+                                ) {
+                                    Text("Close", color = DarkGreen)
+                                }
+                            }
+                        )
                     }
-                    if (saveSuccess) {
-                        Row(verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Icon(Icons.Filled.CheckCircle, null,
-                                tint = DarkGreen, modifier = Modifier.size(14.dp))
-                            Text("Item updated!", color = DarkGreen, fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold)
-                        }
+
+                    // ── Error Dialog ──────────────────────────────────────────
+                    if (showErrorDialog) {
+                        AlertDialog(
+                            onDismissRequest = { showErrorDialog = false },
+                            icon = {
+                                Icon(
+                                    Icons.Filled.Error,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(36.dp)
+                                )
+                            },
+                            title = { Text("Update Failed", fontWeight = FontWeight.Bold) },
+                            text = { Text(dialogErrorMsg) },
+                            confirmButton = {
+                                Button(
+                                    onClick = { showErrorDialog = false },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.error
+                                    ),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text("Close", color = Color.White)
+                                }
+                            }
+                        )
                     }
 
                     // Save button
@@ -3215,12 +3368,14 @@ private fun EditItemPage(
                         onClick = {
                             saveError = null
                             if (editStatus.isBlank()) {
-                                saveError = "Status cannot be empty."
+                                dialogErrorMsg = "Status cannot be empty."
+                                showErrorDialog = true
                                 return@Button
                             }
                             val markupPts = editMarkupPoints.toIntOrNull()
                             if (canEditMarkup && editMarkupPoints.isNotBlank() && markupPts == null) {
-                                saveError = "Markup points must be a valid number."
+                                dialogErrorMsg = "Markup points must be a valid number."
+                                showErrorDialog = true
                                 return@Button
                             }
                             scope.launch {
@@ -3236,13 +3391,15 @@ private fun EditItemPage(
                                 isSaving = false
                                 if (ok) {
                                     saveSuccess = true
-                                    val updated = item.copy(
+                                    savedChatItem = item.copy(
                                         status = editStatus,
                                         markupPoints = markupPts ?: item.markupPoints
                                     )
-                                    onItemUpdated(updated)
+                                    // Show dialog FIRST — onItemUpdated is called from Back button
+                                    showSuccessDialog = true
                                 } else {
-                                    saveError = errMsg.ifBlank { "Failed to update. Please try again." }
+                                    dialogErrorMsg = errMsg.ifBlank { "Failed to update. Please try again." }
+                                    showErrorDialog = true
                                 }
                             }
                         },
@@ -3252,8 +3409,11 @@ private fun EditItemPage(
                         colors = ButtonDefaults.buttonColors(containerColor = DarkGreen)
                     ) {
                         if (isSaving) {
-                            CircularProgressIndicator(color = Color.White,
-                                modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                            CircularProgressIndicator(
+                                color = Color.White,
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp
+                            )
                         } else {
                             Icon(Icons.Filled.Save, null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
@@ -3268,6 +3428,7 @@ private fun EditItemPage(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun EditItemPageForList(
     item: Item,
@@ -3282,15 +3443,21 @@ private fun EditItemPageForList(
     var expanded by remember { mutableStateOf(false) }
     var editStatus by remember { mutableStateOf(item.status) }
     val statusOptions = listOf("private", "acquired", "public", "reserved", "sold")
-    
-    // Markup points - editable only for private/acquired
+
+    // Markup points - editable only if CURRENTLY SELECTED status is private/acquired
     var editMarkupPoints by remember { mutableStateOf(item.markupPoints.toString()) }
-    val canEditMarkup = item.status.lowercase() == "private" || 
-                       item.status.lowercase() == "acquired"
-    
+    val canEditMarkup = editStatus.lowercase() == "private" ||
+                       editStatus.lowercase() == "acquired"
+
     var isSaving by remember { mutableStateOf(false) }
     var saveError by remember { mutableStateOf<String?>(null) }
     var saveSuccess by remember { mutableStateOf(false) }
+    // Dialog state
+    var showSuccessDialog by remember { mutableStateOf(false) }
+    var showErrorDialog  by remember { mutableStateOf(false) }
+    var dialogErrorMsg   by remember { mutableStateOf("") }
+    // Holds the updated item until the user dismisses the success dialog
+    var savedChatItem    by remember { mutableStateOf<ChatItem?>(null) }
 
     BackHandler(onBack = onBack)
 
@@ -3438,44 +3605,41 @@ private fun EditItemPageForList(
                     Text("Status", fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                     
-                    Box(modifier = Modifier.fillMaxWidth()) {
+                    ExposedDropdownMenuBox(
+                        expanded = expanded,
+                        onExpandedChange = { expanded = !expanded },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
                         OutlinedTextField(
-                            value = editStatus,
+                            value = editStatus.replaceFirstChar { it.uppercaseChar() },
                             onValueChange = {},
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { expanded = true },
+                                .menuAnchor()
+                                .fillMaxWidth(),
                             readOnly = true,
                             shape = RoundedCornerShape(10.dp),
                             singleLine = true,
                             trailingIcon = {
-                                Icon(
-                                    if (expanded) Icons.Filled.ArrowDropUp else Icons.Filled.ArrowDropDown,
-                                    "Select status",
-                                    tint = DarkGreen
-                                )
+                                ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
                             },
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = DarkGreen,
-                                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
-                                disabledTextColor = MaterialTheme.colorScheme.onSurface
+                                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
                             )
                         )
-                        
-                        DropdownMenu(
+                        ExposedDropdownMenu(
                             expanded = expanded,
-                            onDismissRequest = { expanded = false },
-                            modifier = Modifier.fillMaxWidth()
+                            onDismissRequest = { expanded = false }
                         ) {
                             statusOptions.forEach { status ->
                                 DropdownMenuItem(
-                                    text = { 
+                                    text = {
                                         Text(
                                             status.replaceFirstChar { it.uppercaseChar() },
                                             fontWeight = if (status == editStatus) FontWeight.Bold else FontWeight.Normal
                                         )
                                     },
-                                    onClick = { 
+                                    onClick = {
                                         editStatus = status
                                         expanded = false
                                         saveError = null
@@ -3485,10 +3649,12 @@ private fun EditItemPageForList(
                         }
                     }
 
-                    // Markup Points field (editable only if status is private or acquired)
+                    // Markup Points field — editable when status is private/acquired,
+                    // read-only (greyed card) for all other statuses.
+                    // Always visible so the current value is never hidden from the admin.
                     Text("Markup Points", fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    
+
                     if (canEditMarkup) {
                         OutlinedTextField(
                             value = editMarkupPoints,
@@ -3503,6 +3669,7 @@ private fun EditItemPageForList(
                             )
                         )
                     } else {
+                        // Show the actual markup_points value from the item (read-only)
                         Card(
                             modifier = Modifier.fillMaxWidth(),
                             colors = CardDefaults.cardColors(
@@ -3519,7 +3686,8 @@ private fun EditItemPageForList(
                                     modifier = Modifier.size(20.dp))
                                 Spacer(Modifier.width(8.dp))
                                 Text(
-                                    editMarkupPoints,
+                                    text = if (item.markupPoints > 0) "${item.markupPoints} pts"
+                                           else "Not set",
                                     fontSize = 16.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -3547,18 +3715,71 @@ private fun EditItemPageForList(
 
                     HorizontalDivider()
 
-                    // Save and error messages
-                    saveError?.let {
-                        Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                    // ── Success Dialog ─────────────────────────────────────────
+                    if (showSuccessDialog) {
+                        AlertDialog(
+                            onDismissRequest = { showSuccessDialog = false },
+                            icon = {
+                                Icon(
+                                    Icons.Filled.CheckCircle,
+                                    contentDescription = null,
+                                    tint = DarkGreen,
+                                    modifier = Modifier.size(36.dp)
+                                )
+                            },
+                            title = { Text("Success", fontWeight = FontWeight.Bold) },
+                            text = { Text("Item has been updated successfully.") },
+                            confirmButton = {
+                                Button(
+                                    onClick = {
+                                        showSuccessDialog = false
+                                        savedChatItem?.let { onItemUpdated(it) }
+                                        onBack()
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = DarkGreen),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text("Back", color = Color.White)
+                                }
+                            },
+                            dismissButton = {
+                                OutlinedButton(
+                                    onClick = { showSuccessDialog = false },
+                                    shape = RoundedCornerShape(8.dp),
+                                    border = BorderStroke(1.dp, DarkGreen)
+                                ) {
+                                    Text("Close", color = DarkGreen)
+                                }
+                            }
+                        )
                     }
-                    if (saveSuccess) {
-                        Row(verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Icon(Icons.Filled.CheckCircle, null,
-                                tint = DarkGreen, modifier = Modifier.size(14.dp))
-                            Text("Item updated!", color = DarkGreen, fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold)
-                        }
+
+                    // ── Error Dialog ───────────────────────────────────────────
+                    if (showErrorDialog) {
+                        AlertDialog(
+                            onDismissRequest = { showErrorDialog = false },
+                            icon = {
+                                Icon(
+                                    Icons.Filled.Error,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(36.dp)
+                                )
+                            },
+                            title = { Text("Update Failed", fontWeight = FontWeight.Bold) },
+                            text = { Text(dialogErrorMsg) },
+                            confirmButton = {
+                                Button(
+                                    onClick = { showErrorDialog = false },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.error
+                                    ),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text("Close", color = Color.White)
+                                }
+                            }
+                        )
                     }
 
                     // Save button
@@ -3566,12 +3787,14 @@ private fun EditItemPageForList(
                         onClick = {
                             saveError = null
                             if (editStatus.isBlank()) {
-                                saveError = "Status cannot be empty."
+                                dialogErrorMsg = "Status cannot be empty."
+                                showErrorDialog = true
                                 return@Button
                             }
                             val markupPts = editMarkupPoints.toIntOrNull()
                             if (canEditMarkup && editMarkupPoints.isNotBlank() && markupPts == null) {
-                                saveError = "Markup points must be a valid number."
+                                dialogErrorMsg = "Markup points must be a valid number."
+                                showErrorDialog = true
                                 return@Button
                             }
                             scope.launch {
@@ -3587,8 +3810,7 @@ private fun EditItemPageForList(
                                 isSaving = false
                                 if (ok) {
                                     saveSuccess = true
-                                    // Convert Item to ChatItem and call onItemUpdated
-                                    val chatItem = ChatItem(
+                                    savedChatItem = ChatItem(
                                         itemId = item.itemId,
                                         title = item.title,
                                         description = item.description,
@@ -3597,9 +3819,11 @@ private fun EditItemPageForList(
                                         status = editStatus,
                                         photos = item.photos
                                     )
-                                    onItemUpdated(chatItem)
+                                    // Show dialog FIRST — onItemUpdated is called from the Back button
+                                    showSuccessDialog = true
                                 } else {
-                                    saveError = errMsg.ifBlank { "Failed to update. Please try again." }
+                                    dialogErrorMsg = errMsg.ifBlank { "Failed to update. Please try again." }
+                                    showErrorDialog = true
                                 }
                             }
                         },
@@ -3609,8 +3833,11 @@ private fun EditItemPageForList(
                         colors = ButtonDefaults.buttonColors(containerColor = DarkGreen)
                     ) {
                         if (isSaving) {
-                            CircularProgressIndicator(color = Color.White,
-                                modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                            CircularProgressIndicator(
+                                color = Color.White,
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp
+                            )
                         } else {
                             Icon(Icons.Filled.Save, null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
