@@ -1,0 +1,39 @@
+Title: Fati-Market: Mobile-Based Redistribution of Used Academic Supplies Marketplace for Ofelia’s Store
+
+app name: Fati-Market
+olfu school po kasi kaya eto po:
+dark green for primary color
+gold or yellow
+off-white/light gray
+white
+
+flow po ng application:
+
+registration:
+bago po makita ang marketplace, need muna magregister or login
+1. sign-up: magre-register ang student gamit ang kanilang name at school email. // DONE
+2. id upload: kailangang mag-upload ng photo ng olfu student id or registration card // DONE
+3. admin approval: makikita ni Ofelia which is the recipient sa kanyang admin dashboard ang pending request. // DONE
+i-ve-verify niya kung taga-fatima nga ang user bago i-click ang "approve." // DONE
+
+selling or offering flow (student seller to ofelia)
+create offer: ang student ay mag-u-upload ng gamit (for example nursing scrub suit) na may photo at description.
+2. private listing: ang listing po ay hindi pa makikita ng ibang students. si ofelia lang ang makakakita nito sa dashboard.
+3. chat & negotiation: magme-message ang student kay ofelia para pag-usapan ang condition at initial points/price.
+4. physical drop-off: dadalhin ng student ang gamit sa sari-sari store.
+5. acquisition: kapag okay ang gamit, i-a-accept ni ofelia ang offer. ang student ay makakatanggap ng points
+sa kanilang wallet as payment.
+
+the reselling logic side (ofelia to marketplace)
+dito na po papasok ang "markup" o pagbebenta ni ofelia sa public or kung sino po yung nagregister sa app.
+1. item edit: i-e-edit ni ofelia ang item status mula sa "acquired" patungong "public."
+2. markup: papatungan ni ofelia ang points (halimbawa: binili niya ng 50 points, ibebenta niya ng 60 points para sa profit ng store).
+3. marketplace display: lalabas na ang item sa feed ng lahat ng registered students.
+
+buying/trading flow (buyer to ofelia)
+1. browse: titingin ang buyer sa marketplace or maglagay po ng category
+2. inquiry: i-me-message ng buyer si ofelia (e.g., "available pa po itong scrubs?").
+3. payment negotiation: pag-uusapan sa chat kung gagamit ba ng points, physical cash, o direct trade (swap ng gamit).
+4. reservation: i-ma-mark ni ofelia ang item bilang "reserved" para sa buyer na iyon.
+5. claim: pupunta ang buyer sa store ni ofelia para ibigay ang payment (cash/points) at makuha ang item.
+6. completion: i-ma-mark ni ofelia ang transaction bilang "sold."
