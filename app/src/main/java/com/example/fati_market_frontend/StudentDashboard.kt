@@ -13,6 +13,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -41,6 +42,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -50,6 +52,7 @@ import coil.compose.SubcomposeAsyncImage
 import com.example.fati_market_frontend.ui.theme.DarkGreen
 import com.example.fati_market_frontend.ui.theme.DarkGreenLight
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -125,7 +128,7 @@ fun StudentDashboard(isDarkMode: Boolean, onThemeToggle: () -> Unit, onLogout: (
         FavoritesScreen(
             token             = token,
             onFavoriteRemoved = { itemId -> favoritedIds = favoritedIds - itemId },
-            onItemClick       = { item -> selectedFavItem = item; showFavorites = false },
+            onItemClick       = { item -> selectedFavItem = item },
             onDismiss         = { showFavorites = false }
         )
     }
@@ -210,6 +213,7 @@ fun StudentDashboard(isDarkMode: Boolean, onThemeToggle: () -> Unit, onLogout: (
                             onFavoritesClick     = { showFavorites = true }
                         )
                         StudentTab.ADD_ITEM -> StudentAddItemContent(
+                            onMenuClick      = { openDrawer() },
                             favoritesCount   = favoritedIds.size,
                             onFavoritesClick = { showFavorites = true }
                         )
@@ -1598,24 +1602,22 @@ private fun ItemDetailDialog(
                                     contentPadding        = PaddingValues(12.dp),
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    detailItem.photos.forEachIndexed { index, url ->
-                                        item {
-                                            AsyncImage(
-                                                model              = url,
-                                                contentDescription = null,
-                                                contentScale       = ContentScale.Crop,
-                                                modifier           = Modifier
-                                                    .size(64.dp)
-                                                    .clip(RoundedCornerShape(8.dp))
-                                                    .border(
-                                                        width = if (index == currentImageIndex) 2.dp else 1.dp,
-                                                        color = if (index == currentImageIndex) DarkGreen
-                                                                else MaterialTheme.colorScheme.outlineVariant,
-                                                        shape = RoundedCornerShape(8.dp)
-                                                    )
-                                                    .clickable { currentImageIndex = index }
-                                            )
-                                        }
+                                    itemsIndexed(detailItem.photos) { index, url ->
+                                        AsyncImage(
+                                            model              = url,
+                                            contentDescription = null,
+                                            contentScale       = ContentScale.Crop,
+                                            modifier           = Modifier
+                                                .size(64.dp)
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .border(
+                                                    width = if (index == currentImageIndex) 2.dp else 1.dp,
+                                                    color = if (index == currentImageIndex) DarkGreen
+                                                            else MaterialTheme.colorScheme.outlineVariant,
+                                                    shape = RoundedCornerShape(8.dp)
+                                                )
+                                                .clickable { currentImageIndex = index }
+                                        )
                                     }
                                 }
                             }
@@ -1786,98 +1788,203 @@ private fun FavoritesScreen(
     var favoriteItems by remember { mutableStateOf<List<Item>>(emptyList()) }
     var isLoading     by remember { mutableStateOf(true) }
     var removingId    by remember { mutableStateOf<Int?>(null) }
+    var pendingRemove by remember { mutableStateOf<Item?>(null) }
+    var categories    by remember { mutableStateOf<List<Category>>(emptyList()) }
+    var selectedCategoryId by remember { mutableStateOf<Int?>(null) }
 
     LaunchedEffect(Unit) {
-        favoriteItems = withContext(Dispatchers.IO) { fetchFavoriteItems(token) }
-        isLoading     = false
+        isLoading = true
+        try {
+            val favs = withContext(Dispatchers.IO) { fetchFavoriteItems(token) }
+            val cats = withContext(Dispatchers.IO) { fetchCategories(token) }
+            favoriteItems = favs
+            categories = cats
+        } catch (_: Exception) {}
+        isLoading = false
+    }
+
+    val filteredItems = remember(favoriteItems, selectedCategoryId) {
+        if (selectedCategoryId == null) favoriteItems
+        else favoriteItems.filter { it.categoryId == selectedCategoryId }
+    }
+
+    // Undo-style: brief confirmation before actually removing
+    pendingRemove?.let { toRemove ->
+        LaunchedEffect(toRemove) {
+            delay(1200)
+            if (pendingRemove?.itemId == toRemove.itemId) {
+                removingId = toRemove.itemId
+                val ok = withContext(Dispatchers.IO) { removeFavorite(token, toRemove.itemId) }
+                if (ok) {
+                    favoriteItems = favoriteItems.filter { it.itemId != toRemove.itemId }
+                    onFavoriteRemoved(toRemove.itemId)
+                }
+                removingId    = null
+                pendingRemove = null
+            }
+        }
     }
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             Column(modifier = Modifier.fillMaxSize()) {
-                // Top bar
+                // ── Modern Gradient Header ──────────────────────────────────────
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(DarkGreen)
-                ) {
-                    Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
-                    Row(
-                        modifier          = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 4.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        IconButton(onClick = onDismiss) {
-                            Icon(Icons.Filled.ArrowBack, null, tint = Color.White)
-                        }
-                        Text(
-                            "My Favorites",
-                            color      = Color.White,
-                            fontWeight = FontWeight.Bold,
-                            fontSize   = 18.sp,
-                            modifier   = Modifier.weight(1f)
+                        .background(
+                            Brush.verticalGradient(listOf(DarkGreen, DarkGreenLight))
                         )
-                        if (!isLoading) {
-                            Surface(
-                                shape = RoundedCornerShape(50),
-                                color = Color.White.copy(alpha = 0.2f)
-                            ) {
-                                Text(
-                                    "${favoriteItems.size} items",
-                                    color    = Color.White,
-                                    fontSize = 12.sp,
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                                )
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
+                        // Navigation Bar (Clean Centered Title)
+                        // Navigation Bar (Left-aligned Title)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(56.dp)
+                                .padding(horizontal = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            IconButton(onClick = onDismiss) {
+                                Icon(Icons.Filled.ArrowBack, "Back", tint = Color.White)
                             }
+                            Text(
+                                "My Favorites",
+                                color = Color.White,
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize   = 19.sp,
+                                modifier   = Modifier.padding(start = 4.dp)
+                            )
                         }
-                        Spacer(Modifier.width(8.dp))
                     }
                 }
 
-                when {
-                    isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(color = DarkGreen)
-                    }
-                    favoriteItems.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            Icon(Icons.Outlined.FavoriteBorder, null,
-                                tint     = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-                                modifier = Modifier.size(72.dp))
-                            Text("No favorites yet", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 16.sp)
-                            Text("Tap the heart icon on any item to save it here.",
-                                color    = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                                fontSize = 13.sp,
-                                modifier = Modifier.padding(horizontal = 32.dp))
-                        }
-                    }
-                    else -> LazyColumn(
-                        modifier            = Modifier.fillMaxSize(),
-                        contentPadding      = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                // ── Category Filter ───────────────────────────────────────────
+                if (!isLoading && favoriteItems.isNotEmpty() && categories.isNotEmpty()) {
+                    LazyRow(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.surface)
+                            .padding(vertical = 10.dp),
+                        contentPadding = PaddingValues(horizontal = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        items(favoriteItems) { item ->
-                            FavoriteItemCard(
-                                item       = item,
-                                isRemoving = removingId == item.itemId,
-                                onClick    = { onItemClick(item) },
-                                onRemove   = {
-                                    scope.launch {
-                                        removingId = item.itemId
-                                        val ok = withContext(Dispatchers.IO) { removeFavorite(token, item.itemId) }
-                                        if (ok) {
-                                            favoriteItems = favoriteItems.filter { it.itemId != item.itemId }
-                                            onFavoriteRemoved(item.itemId)
-                                        }
-                                        removingId = null
-                                    }
-                                }
+                        item {
+                            FilterChip(
+                                selected = selectedCategoryId == null,
+                                onClick = { selectedCategoryId = null },
+                                label = { Text("All", fontSize = 12.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = DarkGreen,
+                                    selectedLabelColor = Color.White
+                                )
                             )
                         }
-                        item { Spacer(Modifier.height(8.dp)) }
+                        items(categories) { cat ->
+                            FilterChip(
+                                selected = selectedCategoryId == cat.id,
+                                onClick = {
+                                    selectedCategoryId = if (selectedCategoryId == cat.id) null else cat.id
+                                },
+                                label = { Text(cat.name, fontSize = 12.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = DarkGreen,
+                                    selectedLabelColor = Color.White
+                                )
+                            )
+                        }
+                    }
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                }
+
+                // ── Main Content Area ───────────────────────────────────────────
+                when {
+                    isLoading -> {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                CircularProgressIndicator(color = DarkGreen, strokeWidth = 3.dp)
+                                Spacer(Modifier.height(16.dp))
+                                Text("Refreshing your items…", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f), fontSize = 14.sp)
+                            }
+                        }
+                    }
+
+                    favoriteItems.isEmpty() -> {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center,
+                                modifier = Modifier.padding(horizontal = 40.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(140.dp)
+                                        .clip(CircleShape)
+                                        .background(DarkGreen.copy(alpha = 0.05f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        Icons.Outlined.FavoriteBorder, null,
+                                        tint = DarkGreen.copy(alpha = 0.2f),
+                                        modifier = Modifier.size(80.dp)
+                                    )
+                                }
+                                Spacer(Modifier.height(24.dp))
+                                Text("Nothing Saved Yet", fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                                Spacer(Modifier.height(8.dp))
+                                Text(
+                                    "Your favorite listings will appear here so you can find them easily later.",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 14.sp,
+                                    textAlign = TextAlign.Center,
+                                    lineHeight = 22.sp
+                                )
+                                Spacer(Modifier.height(32.dp))
+                                Button(
+                                    onClick = onDismiss,
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = DarkGreen),
+                                    contentPadding = PaddingValues(horizontal = 24.dp, vertical = 12.dp)
+                                ) {
+                                    Icon(Icons.Filled.Storefront, null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("Browse Marketplace", fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+
+                    else -> {
+                        Column(modifier = Modifier.fillMaxSize()) {
+                            // Count label outside of header
+                            Text(
+                                "${favoriteItems.size} items saved",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(start = 18.dp, top = 16.dp, bottom = 4.dp)
+                            )
+
+                            LazyVerticalGrid(
+                                columns = GridCells.Fixed(2),
+                                modifier = Modifier.fillMaxSize(),
+                                contentPadding = PaddingValues(16.dp),
+                                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(16.dp)
+                            ) {
+                                items(filteredItems, key = { it.itemId }) { item ->
+                                    FavoriteItemCard(
+                                        item = item,
+                                        isRemoving = removingId == item.itemId || pendingRemove?.itemId == item.itemId,
+                                        onClick = { onItemClick(item) },
+                                        onRemove = { pendingRemove = item }
+                                    )
+                                }
+                                item(span = { GridItemSpan(2) }) { Spacer(Modifier.height(24.dp)) }
+                            }
+                        }
                     }
                 }
             }
@@ -1888,56 +1995,126 @@ private fun FavoritesScreen(
 @Composable
 private fun FavoriteItemCard(item: Item, isRemoving: Boolean, onClick: () -> Unit, onRemove: () -> Unit) {
     Card(
-        modifier  = Modifier.fillMaxWidth().clickable(onClick = onClick),
-        shape     = RoundedCornerShape(14.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
-        colors    = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(20.dp))
+            .clickable(enabled = !isRemoving, onClick = onClick),
+        shape = RoundedCornerShape(20.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
-        Row(modifier = Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            // Thumbnail
-            val photoUrl = item.photos.firstOrNull() ?: ""
-            if (photoUrl.isNotBlank()) {
-                AsyncImage(
-                    model              = photoUrl,
-                    contentDescription = null,
-                    contentScale       = ContentScale.Crop,
-                    modifier           = Modifier
-                        .size(80.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                )
-            } else {
+        Box(modifier = Modifier.fillMaxWidth()) {
+            Column {
+                // Photo Section
                 Box(
                     modifier = Modifier
-                        .size(80.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant),
-                    contentAlignment = Alignment.Center
+                        .fillMaxWidth()
+                        .height(170.dp)
                 ) {
-                    Icon(Icons.Filled.Photo, null,
-                        tint     = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-                        modifier = Modifier.size(32.dp))
+                    val photoUrl = item.photos.firstOrNull() ?: ""
+                    if (photoUrl.isNotBlank()) {
+                        AsyncImage(
+                            model = photoUrl,
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(MaterialTheme.colorScheme.surfaceVariant),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.Filled.Image, null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
+                                modifier = Modifier.size(48.dp)
+                            )
+                        }
+                    }
+
+                    // Price overlay
+                    Surface(
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .padding(10.dp),
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color.Black.copy(alpha = 0.7f)
+                    ) {
+                        Text(
+                            "${item.markupPoints} pts",
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
+
+                    // Favorite toggle overlay
+                    IconButton(
+                        onClick = onRemove,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(6.dp)
+                            .background(Color.White.copy(alpha = 0.9f), CircleShape)
+                            .size(32.dp)
+                    ) {
+                        if (isRemoving) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                                color = Color(0xFFFF4444)
+                            )
+                        } else {
+                            Icon(
+                                Icons.Filled.Favorite,
+                                contentDescription = "Remove",
+                                tint = Color(0xFFFF5252),
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                }
+
+                // Info Section
+                Column(
+                    modifier = Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        item.title,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            Icons.Filled.Person, null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(12.dp)
+                        )
+                        Text(
+                            item.sellerEmail.substringBefore("@"),
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
             }
-
-            Spacer(Modifier.width(12.dp))
-
-            // Info
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(item.title, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Icon(Icons.Filled.MonetizationOn, null, tint = DarkGreen, modifier = Modifier.size(14.dp))
-                    Text("${item.markupPoints} pts", fontWeight = FontWeight.Bold, color = DarkGreen, fontSize = 13.sp)
-                }
-                Text(item.sellerEmail.substringBefore("@"), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-
-            // Remove button
+            
             if (isRemoving) {
-                CircularProgressIndicator(modifier = Modifier.size(24.dp).padding(4.dp), strokeWidth = 2.dp, color = Color(0xFFFF4444))
-            } else {
-                IconButton(onClick = onRemove) {
-                    Icon(Icons.Filled.Favorite, null, tint = Color(0xFFFF4444), modifier = Modifier.size(22.dp))
-                }
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .background(Color.White.copy(alpha = 0.7f))
+                )
             }
         }
     }
@@ -2018,6 +2195,7 @@ private fun fetchItems(token: String, status: String): List<Item> {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun StudentAddItemContent(
+    onMenuClick: () -> Unit = {},
     favoritesCount: Int = 0,
     onFavoritesClick: () -> Unit = {}
 ) {
@@ -2094,7 +2272,7 @@ private fun StudentAddItemContent(
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        AdminPageHeader(title = "Add Item", onMenuClick = {}, favoritesCount = favoritesCount, onFavoritesClick = onFavoritesClick)
+        AdminPageHeader(title = "Add Item", onMenuClick = onMenuClick, favoritesCount = favoritesCount, onFavoritesClick = onFavoritesClick)
 
         Column(
             modifier = Modifier
