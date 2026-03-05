@@ -764,7 +764,39 @@ private fun DrawerSubItem(label: String, selected: Boolean, onClick: () -> Unit)
 @Composable
 private fun DrawerPageContent(page: DrawerPage, onMenuClick: () -> Unit, onGoToChat: () -> Unit = {}) {
     when (page) {
-        DrawerPage.PrivateOffers -> AdminPrivateOffersContent(onMenuClick = onMenuClick, onGoToChat = onGoToChat)
+        DrawerPage.PrivateOffers  -> AdminPrivateOffersContent(onMenuClick = onMenuClick, onGoToChat = onGoToChat)
+        DrawerPage.AcquiredItems  -> AdminItemListContent(
+            title        = "Acquired Items",
+            status       = "acquired",
+            emptyText    = "No acquired items at the moment.",
+            showActions  = true,
+            onMenuClick  = onMenuClick,
+            onGoToChat   = onGoToChat
+        )
+        DrawerPage.PublicListings -> AdminItemListContent(
+            title        = "Public Listings",
+            status       = "public",
+            emptyText    = "No public listings at the moment.",
+            showActions  = false,
+            onMenuClick  = onMenuClick,
+            onGoToChat   = onGoToChat
+        )
+        DrawerPage.ReservedItems  -> AdminItemListContent(
+            title        = "Reserved Items",
+            status       = "reserved",
+            emptyText    = "No reserved items at the moment.",
+            showActions  = false,
+            onMenuClick  = onMenuClick,
+            onGoToChat   = onGoToChat
+        )
+        DrawerPage.SoldItems      -> AdminItemListContent(
+            title        = "Sold Items",
+            status       = "sold",
+            emptyText    = "No sold items at the moment.",
+            showActions  = false,
+            onMenuClick  = onMenuClick,
+            onGoToChat   = onGoToChat
+        )
         else -> Column(modifier = Modifier.fillMaxSize()) {
             AdminPageHeader(title = page.label, onMenuClick = onMenuClick)
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -914,6 +946,590 @@ private fun AdminPrivateOffersContent(onMenuClick: () -> Unit, onGoToChat: () ->
                     }
                 }
             }
+        }
+    }
+}
+
+// ── Generic Item List (Acquired / Public / Reserved / Sold) ────────────────────
+@Composable
+private fun AdminItemListContent(
+    title: String,
+    status: String,
+    emptyText: String,
+    showActions: Boolean,
+    onMenuClick: () -> Unit,
+    onGoToChat: () -> Unit = {}
+) {
+    val context = LocalContext.current
+    val prefs   = remember { context.getSharedPreferences("fatimarket_prefs", 0) }
+    val token   = remember { prefs.getString("auth_token", "") ?: "" }
+    val scope   = rememberCoroutineScope()
+
+    var itemList     by remember { mutableStateOf<List<Item>>(emptyList()) }
+    var isLoading    by remember { mutableStateOf(true) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+    var editingItem  by remember { mutableStateOf<Item?>(null) }
+    var selectedItem by remember { mutableStateOf<Item?>(null) }
+
+    // hide bottom bar whenever we are in edit OR detail mode
+    val showBar = editingItem == null && selectedItem == null
+
+    fun loadItems() {
+        scope.launch {
+            isLoading    = true
+            errorMessage = null
+            try {
+                itemList = withContext(Dispatchers.IO) { fetchItems(token, status) }
+            } catch (e: Exception) {
+                errorMessage = e.message ?: "Failed to load items"
+            } finally {
+                isLoading = false
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) { loadItems() }
+
+    // Back-press: close detail first, then edit, then bubble up
+    BackHandler(enabled = selectedItem != null || editingItem != null) {
+        when {
+            selectedItem != null -> selectedItem = null
+            editingItem  != null -> editingItem  = null
+        }
+    }
+
+    CompositionLocalProvider(LocalProvidesBottomBar provides showBar) {
+        when {
+            // ── Edit page ───────────────────────────────────────────────────────
+            editingItem != null -> {
+                EditItemPageForList(
+                    item = editingItem!!,
+                    token = token,
+                    onBack = { editingItem = null },
+                    onItemUpdated = { updatedItem ->
+                        itemList = itemList.map {
+                            if (it.itemId == updatedItem.itemId)
+                                it.copy(status = updatedItem.status, markupPoints = updatedItem.markupPoints)
+                            else it
+                        }
+                        editingItem = null
+                    }
+                )
+            }
+
+            // ── Item detail page (view-only pages) ──────────────────────────────
+            selectedItem != null -> {
+                AdminItemDetailPage(
+                    item   = selectedItem!!,
+                    onBack = { selectedItem = null }
+                )
+            }
+
+            // ── List ────────────────────────────────────────────────────────────
+            else -> {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    AdminPageHeader(title = title, onMenuClick = onMenuClick)
+
+                    when {
+                        isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(color = DarkGreen)
+                        }
+                        errorMessage != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(12.dp),
+                                modifier = Modifier.padding(horizontal = 24.dp)
+                            ) {
+                                Icon(Icons.Filled.ErrorOutline, null,
+                                    tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(48.dp))
+                                Text(errorMessage ?: "", color = MaterialTheme.colorScheme.error)
+                                Button(onClick = { loadItems() },
+                                    colors = ButtonDefaults.buttonColors(containerColor = DarkGreen)) {
+                                    Text("Retry", color = Color.White)
+                                }
+                            }
+                        }
+                        itemList.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(Icons.Filled.Inventory2, null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(64.dp))
+                                Text(emptyText, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                        else -> LazyColumn(
+                            modifier            = Modifier.fillMaxSize(),
+                            contentPadding      = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            items(itemList, key = { it.itemId }) { item ->
+                                if (showActions) {
+                                    AdminPrivateOfferCard(
+                                        item          = item,
+                                        token         = token,
+                                        onStatusSaved = { newStatus ->
+                                            itemList = itemList.map {
+                                                if (it.itemId == item.itemId) it.copy(status = newStatus) else it
+                                            }
+                                        },
+                                        onGoToChat  = onGoToChat,
+                                        onEditClick = { editingItem = it }
+                                    )
+                                } else {
+                                    AdminViewOnlyItemCard(
+                                        item    = item,
+                                        onClick = { selectedItem = item }
+                                    )
+                                }
+                            }
+                            item { Spacer(Modifier.height(8.dp)) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── View-only card (Public / Reserved / Sold — no Edit or Chat buttons) ────────
+@Composable
+private fun AdminViewOnlyItemCard(item: Item, onClick: () -> Unit = {}) {
+    Card(
+        modifier  = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        shape     = RoundedCornerShape(14.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
+        colors    = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            // ── Photo ─────────────────────────────────────────────────────────
+            val photoUrl = item.photos.firstOrNull() ?: ""
+            if (photoUrl.isNotBlank()) {
+                AsyncImage(
+                    model              = photoUrl,
+                    contentDescription = null,
+                    contentScale       = ContentScale.Crop,
+                    modifier           = Modifier
+                        .fillMaxWidth()
+                        .height(180.dp)
+                        .clip(RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp))
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(140.dp)
+                        .clip(RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Filled.Photo, null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                        modifier = Modifier.size(48.dp))
+                }
+            }
+
+            Column(
+                modifier            = Modifier.fillMaxWidth().padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // ── Title + status chip ────────────────────────────────────────
+                Row(
+                    modifier              = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment     = Alignment.CenterVertically
+                ) {
+                    Text(
+                        item.title,
+                        fontWeight = FontWeight.Bold,
+                        fontSize   = 17.sp,
+                        maxLines   = 1,
+                        overflow   = TextOverflow.Ellipsis,
+                        modifier   = Modifier.weight(1f).padding(end = 8.dp)
+                    )
+                    val statusColor = when (item.status.lowercase()) {
+                        "sold"     -> MaterialTheme.colorScheme.error
+                        "reserved" -> Color(0xFFE65100)
+                        "public"   -> DarkGreen
+                        "acquired" -> Color(0xFF1565C0)
+                        else       -> MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+                    val statusBg = statusColor.copy(alpha = 0.12f)
+                    Surface(shape = RoundedCornerShape(50), color = statusBg) {
+                        Text(
+                            item.status.replaceFirstChar { it.uppercaseChar() },
+                            modifier   = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                            fontSize   = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color      = statusColor
+                        )
+                    }
+                }
+
+                // ── Seller + price ─────────────────────────────────────────────
+                Row(
+                    modifier              = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment     = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Icon(Icons.Filled.Person, null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(14.dp))
+                        Text(item.sellerEmail, fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false))
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Icon(Icons.Filled.MonetizationOn, null,
+                            tint = DarkGreen, modifier = Modifier.size(14.dp))
+                        Text("${item.pricePoints} pts", fontWeight = FontWeight.Bold,
+                            color = DarkGreen, fontSize = 13.sp)
+                    }
+                }
+
+                Text(item.description, fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 3, overflow = TextOverflow.Ellipsis)
+
+                // ── Markup info row ───────────────────────────────────────────
+                if (item.markupPoints > 0) {
+                    HorizontalDivider()
+                    Row(verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Icon(Icons.Filled.TrendingUp, null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(14.dp))
+                        Text("Markup: ${item.markupPoints} pts", fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+
+                // ── Tap-to-view hint ──────────────────────────────────────────
+                Row(
+                    verticalAlignment     = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.End,
+                    modifier              = Modifier.fillMaxWidth()
+                ) {
+                    Text("View details", fontSize = 12.sp, color = DarkGreen,
+                        fontWeight = FontWeight.SemiBold)
+                    Icon(Icons.Filled.ChevronRight, null,
+                        tint = DarkGreen, modifier = Modifier.size(16.dp))
+                }
+            }
+        }
+    }
+}
+
+// ── Item Detail Page (full-screen, view-only) ──────────────────────────────────
+@Composable
+private fun AdminItemDetailPage(item: Item, onBack: () -> Unit) {
+    var currentPhotoIndex by remember { mutableStateOf(0) }
+
+    BackHandler(onBack = onBack)
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+    ) {
+        // ── Top bar ───────────────────────────────────────────────────────────
+        val statusColor = when (item.status.lowercase()) {
+            "sold"     -> MaterialTheme.colorScheme.error
+            "reserved" -> Color(0xFFE65100)
+            "public"   -> DarkGreen
+            "acquired" -> Color(0xFF1565C0)
+            else       -> MaterialTheme.colorScheme.onSurfaceVariant
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Brush.verticalGradient(listOf(DarkGreen, DarkGreenLight)))
+        ) {
+            Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
+            Row(
+                modifier          = Modifier
+                    .fillMaxWidth()
+                    .padding(top = with(LocalDensity.current) {
+                        WindowInsets.statusBars.getTop(this).toDp()
+                    })
+                    .height(56.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.Filled.ArrowBack, "Back", tint = Color.White)
+                }
+                Text(
+                    text       = item.title,
+                    color      = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize   = 18.sp,
+                    maxLines   = 1,
+                    overflow   = TextOverflow.Ellipsis,
+                    modifier   = Modifier.weight(1f).padding(end = 12.dp)
+                )
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = Color.White.copy(alpha = 0.18f),
+                    modifier = Modifier.padding(end = 12.dp)
+                ) {
+                    Text(
+                        item.status.replaceFirstChar { it.uppercaseChar() },
+                        modifier   = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                        fontSize   = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color      = Color.White
+                    )
+                }
+            }
+        }
+
+        // ── Scrollable content ────────────────────────────────────────────────
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+        ) {
+            // ── Photo carousel ────────────────────────────────────────────────
+            if (item.photos.isNotEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(260.dp)
+                ) {
+                    AsyncImage(
+                        model              = item.photos[currentPhotoIndex],
+                        contentDescription = null,
+                        contentScale       = ContentScale.Crop,
+                        modifier           = Modifier.fillMaxSize()
+                    )
+                    // Photo counter
+                    if (item.photos.size > 1) {
+                        Surface(
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(10.dp),
+                            shape  = RoundedCornerShape(50),
+                            color  = Color.Black.copy(alpha = 0.55f)
+                        ) {
+                            Text(
+                                "${currentPhotoIndex + 1} / ${item.photos.size}",
+                                modifier   = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                color      = Color.White,
+                                fontSize   = 12.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                        // Prev / Next buttons
+                        if (currentPhotoIndex > 0) {
+                            IconButton(
+                                onClick  = { currentPhotoIndex-- },
+                                modifier = Modifier
+                                    .align(Alignment.CenterStart)
+                                    .padding(start = 6.dp)
+                                    .size(36.dp)
+                                    .background(Color.Black.copy(alpha = 0.35f), CircleShape)
+                            ) {
+                                Icon(Icons.Filled.ChevronLeft, "Prev",
+                                    tint = Color.White, modifier = Modifier.size(24.dp))
+                            }
+                        }
+                        if (currentPhotoIndex < item.photos.lastIndex) {
+                            IconButton(
+                                onClick  = { currentPhotoIndex++ },
+                                modifier = Modifier
+                                    .align(Alignment.CenterEnd)
+                                    .padding(end = 6.dp)
+                                    .size(36.dp)
+                                    .background(Color.Black.copy(alpha = 0.35f), CircleShape)
+                            ) {
+                                Icon(Icons.Filled.ChevronRight, "Next",
+                                    tint = Color.White, modifier = Modifier.size(24.dp))
+                            }
+                        }
+                    }
+                    // Photo thumbnail strip
+                    if (item.photos.size > 1) {
+                        LazyRow(
+                            modifier              = Modifier
+                                .align(Alignment.BottomCenter)
+                                .padding(bottom = 10.dp),
+                            contentPadding        = PaddingValues(horizontal = 8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            itemsIndexed(item.photos) { idx, url ->
+                                Box(
+                                    modifier = Modifier
+                                        .size(if (idx == currentPhotoIndex) 36.dp else 28.dp)
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .border(
+                                            width = if (idx == currentPhotoIndex) 2.dp else 0.dp,
+                                            color = Color.White,
+                                            shape = RoundedCornerShape(6.dp)
+                                        )
+                                        .clickable { currentPhotoIndex = idx }
+                                ) {
+                                    AsyncImage(
+                                        model        = url,
+                                        contentDescription = null,
+                                        contentScale = ContentScale.Crop,
+                                        modifier     = Modifier.fillMaxSize()
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(200.dp)
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Filled.Photo, null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                        modifier = Modifier.size(72.dp))
+                }
+            }
+
+            // ── Details card ──────────────────────────────────────────────────
+            Card(
+                modifier  = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                shape     = RoundedCornerShape(16.dp),
+                elevation = CardDefaults.cardElevation(2.dp),
+                colors    = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            ) {
+                Column(
+                    modifier            = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    // Title
+                    Text(item.title, fontWeight = FontWeight.Bold, fontSize = 20.sp)
+
+                    // Status + price row
+                    Row(
+                        modifier              = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment     = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = statusColor.copy(alpha = 0.12f)
+                        ) {
+                            Text(
+                                item.status.replaceFirstChar { it.uppercaseChar() },
+                                modifier   = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                fontSize   = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color      = statusColor
+                            )
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Icon(Icons.Filled.MonetizationOn, null,
+                                tint = DarkGreen, modifier = Modifier.size(20.dp))
+                            Text(
+                                "${item.pricePoints} pts",
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize   = 20.sp,
+                                color      = DarkGreen
+                            )
+                        }
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                    // Seller
+                    Row(verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(DarkGreen.copy(alpha = 0.12f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Filled.Person, null,
+                                tint = DarkGreen, modifier = Modifier.size(20.dp))
+                        }
+                        Column {
+                            Text("Seller", fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(item.sellerEmail, fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium)
+                        }
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                    // Description
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("Description", fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            letterSpacing = 0.5.sp)
+                        Text(item.description, fontSize = 14.sp, lineHeight = 22.sp)
+                    }
+
+                    // Markup (if set)
+                    if (item.markupPoints > 0) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                        Row(verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0xFF1565C0).copy(alpha = 0.1f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Filled.TrendingUp, null,
+                                    tint = Color(0xFF1565C0), modifier = Modifier.size(20.dp))
+                            }
+                            Column {
+                                Text("Markup", fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("${item.markupPoints} pts", fontSize = 14.sp,
+                                    fontWeight = FontWeight.SemiBold, color = Color(0xFF1565C0))
+                            }
+                        }
+                    }
+
+                    // Listed on
+                    if (item.createdAt.isNotBlank()) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                        Row(verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Filled.CalendarToday, null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(18.dp))
+                            }
+                            Column {
+                                Text("Listed on", fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(formatDate(item.createdAt), fontSize = 14.sp,
+                                    fontWeight = FontWeight.Medium)
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(24.dp))
         }
     }
 }
