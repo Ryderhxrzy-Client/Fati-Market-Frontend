@@ -422,19 +422,43 @@ fun AdminDashboard(isDarkMode: Boolean, onThemeToggle: () -> Unit, onLogout: () 
     val context = LocalContext.current
     val prefs   = remember { context.getSharedPreferences("fatimarket_prefs", 0) }
 
+    val token            = remember { prefs.getString("auth_token", "") ?: "" }
     var userFirstName    by remember { mutableStateOf(prefs.getString("user_first_name", "") ?: "") }
     var userLastName     by remember { mutableStateOf(prefs.getString("user_last_name",  "") ?: "") }
     val userEmail        = remember { prefs.getString("user_email", "") ?: "" }
     val userRole         = remember { prefs.getString("user_role", "admin") ?: "admin" }
-    val userWalletPoints = remember { prefs.getInt("user_wallet_points", 0) }
+    var userWalletPoints by remember { mutableStateOf(prefs.getInt("user_wallet_points", 0)) }
     var userProfilePic   by remember { mutableStateOf(prefs.getString("user_profile_picture", "") ?: "") }
 
     var selectedTab       by remember { mutableStateOf(AdminTab.HOME) }
     var drawerPage        by remember { mutableStateOf<DrawerPage?>(null) }
     var chatConversation  by remember { mutableStateOf<Conversation?>(null) }
+    val showBottomBar     = remember { mutableStateOf(true) }
     val drawerState       = rememberDrawerState(DrawerValue.Closed)
     val scope             = rememberCoroutineScope()
     val openDrawer: () -> Unit = { scope.launch { drawerState.open() } }
+
+    // Fetch wallet points from API
+    LaunchedEffect(Unit) {
+        try {
+            val request = Request.Builder()
+                .url("https://fati-api.alertaraqc.com/api/wallet")
+                .header("Authorization", "Bearer $token")
+                .header("Accept", "application/json")
+                .get()
+                .build()
+            adminHttpClient.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    val body = response.body?.string() ?: ""
+                    val json = JSONObject(body)
+                    val dataObj = json.optJSONObject("data")
+                    userWalletPoints = dataObj?.optInt("wallet_points", 0) ?: 0
+                }
+            }
+        } catch (e: Exception) {
+            // Keep default value
+        }
+    }
 
 
     ModalNavigationDrawer(
@@ -471,10 +495,7 @@ fun AdminDashboard(isDarkMode: Boolean, onThemeToggle: () -> Unit, onLogout: () 
         val chatIsOpen = selectedTab == AdminTab.CHAT && chatConversation != null
         Scaffold(
             bottomBar = {
-                // Read inside the lambda so it picks up any CompositionLocalProvider
-                // set by composables inside the content slot (e.g. DrawerPageContent)
-                val showBottomBar = LocalProvidesBottomBar.current
-                if (!chatIsOpen && showBottomBar) {
+                if (!chatIsOpen && showBottomBar.value) {
                     AdminBottomBar(
                         selected       = selectedTab,
                         userProfilePic = userProfilePic,
@@ -490,18 +511,18 @@ fun AdminDashboard(isDarkMode: Boolean, onThemeToggle: () -> Unit, onLogout: () 
             contentWindowInsets = WindowInsets(0),
             containerColor = MaterialTheme.colorScheme.background
         ) { innerPadding ->
-            val showBottomBar = LocalProvidesBottomBar.current
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(bottom = if (chatIsOpen || !showBottomBar) 0.dp else innerPadding.calculateBottomPadding())
+                    .padding(bottom = if (chatIsOpen || !showBottomBar.value) 0.dp else innerPadding.calculateBottomPadding())
             ) {
                 if (drawerPage != null) {
                     DrawerPageContent(
-                        page             = drawerPage!!,
-                        onMenuClick      = openDrawer,
-                        onGoToChat       = { drawerPage = null; selectedTab = AdminTab.CHAT },
-                        onNavigateToPage = { drawerPage = it }
+                        page                 = drawerPage!!,
+                        onMenuClick          = openDrawer,
+                        onGoToChat           = { drawerPage = null; selectedTab = AdminTab.CHAT },
+                        onNavigateToPage     = { drawerPage = it },
+                        onShowBottomBarChange = { showBottomBar.value = it }
                     )
                 } else {
                     when (selectedTab) {
@@ -767,49 +788,55 @@ private fun DrawerPageContent(
     page: DrawerPage,
     onMenuClick: () -> Unit,
     onGoToChat: () -> Unit = {},
-    onNavigateToPage: (DrawerPage) -> Unit = {}
+    onNavigateToPage: (DrawerPage) -> Unit = {},
+    onShowBottomBarChange: (Boolean) -> Unit = {}
 ) {
     when (page) {
         DrawerPage.PrivateOffers  -> AdminPrivateOffersContent(
-            onMenuClick      = onMenuClick,
-            onGoToChat       = onGoToChat,
-            onNavigateToPage = onNavigateToPage
+            onMenuClick           = onMenuClick,
+            onGoToChat            = onGoToChat,
+            onNavigateToPage      = onNavigateToPage,
+            onShowBottomBarChange = onShowBottomBarChange
         )
         DrawerPage.AcquiredItems  -> AdminItemListContent(
-            title            = "Acquired Items",
-            status           = "acquired",
-            emptyText        = "No acquired items at the moment.",
-            showActions      = true,
-            onMenuClick      = onMenuClick,
-            onGoToChat       = onGoToChat,
-            onNavigateToPage = onNavigateToPage
+            title                 = "Acquired Items",
+            status                = "acquired",
+            emptyText             = "No acquired items at the moment.",
+            showActions           = true,
+            onMenuClick           = onMenuClick,
+            onGoToChat            = onGoToChat,
+            onNavigateToPage      = onNavigateToPage,
+            onShowBottomBarChange = onShowBottomBarChange
         )
         DrawerPage.PublicListings -> AdminItemListContent(
-            title            = "Public Listings",
-            status           = "public",
-            emptyText        = "No public listings at the moment.",
-            showActions      = false,
-            onMenuClick      = onMenuClick,
-            onGoToChat       = onGoToChat,
-            onNavigateToPage = onNavigateToPage
+            title                 = "Public Listings",
+            status                = "public",
+            emptyText             = "No public listings at the moment.",
+            showActions           = false,
+            onMenuClick           = onMenuClick,
+            onGoToChat            = onGoToChat,
+            onNavigateToPage      = onNavigateToPage,
+            onShowBottomBarChange = onShowBottomBarChange
         )
         DrawerPage.ReservedItems  -> AdminItemListContent(
-            title            = "Reserved Items",
-            status           = "reserved",
-            emptyText        = "No reserved items at the moment.",
-            showActions      = false,
-            onMenuClick      = onMenuClick,
-            onGoToChat       = onGoToChat,
-            onNavigateToPage = onNavigateToPage
+            title                 = "Reserved Items",
+            status                = "reserved",
+            emptyText             = "No reserved items at the moment.",
+            showActions           = false,
+            onMenuClick           = onMenuClick,
+            onGoToChat            = onGoToChat,
+            onNavigateToPage      = onNavigateToPage,
+            onShowBottomBarChange = onShowBottomBarChange
         )
         DrawerPage.SoldItems      -> AdminItemListContent(
-            title            = "Sold Items",
-            status           = "sold",
-            emptyText        = "No sold items at the moment.",
-            showActions      = false,
-            onMenuClick      = onMenuClick,
-            onGoToChat       = onGoToChat,
-            onNavigateToPage = onNavigateToPage
+            title                 = "Sold Items",
+            status                = "sold",
+            emptyText             = "No sold items at the moment.",
+            showActions           = false,
+            onMenuClick           = onMenuClick,
+            onGoToChat            = onGoToChat,
+            onNavigateToPage      = onNavigateToPage,
+            onShowBottomBarChange = onShowBottomBarChange
         )
         else -> Column(modifier = Modifier.fillMaxSize()) {
             AdminPageHeader(title = page.label, onMenuClick = onMenuClick)
@@ -854,7 +881,8 @@ private enum class ItemStatus(val displayName: String) {
 private fun AdminPrivateOffersContent(
     onMenuClick: () -> Unit,
     onGoToChat: () -> Unit = {},
-    onNavigateToPage: (DrawerPage) -> Unit = {}
+    onNavigateToPage: (DrawerPage) -> Unit = {},
+    onShowBottomBarChange: (Boolean) -> Unit = {}
 ) {
     val context = LocalContext.current
     val prefs   = remember { context.getSharedPreferences("fatimarket_prefs", 0) }
@@ -883,8 +911,12 @@ private fun AdminPrivateOffersContent(
     LaunchedEffect(Unit) { loadItems() }
 
     // Pass editing state up to hide bottom bar in AdminDashboard
+    val showBar = remember(editingItem) { editingItem == null }
+    LaunchedEffect(showBar) {
+        onShowBottomBarChange(showBar)
+    }
     CompositionLocalProvider(
-        LocalProvidesBottomBar provides (editingItem == null)
+        LocalProvidesBottomBar provides showBar
     ) {
         AnimatedContent(
             targetState = editingItem != null,
@@ -986,7 +1018,8 @@ private fun AdminItemListContent(
     showActions: Boolean,
     onMenuClick: () -> Unit,
     onGoToChat: () -> Unit = {},
-    onNavigateToPage: (DrawerPage) -> Unit = {}
+    onNavigateToPage: (DrawerPage) -> Unit = {},
+    onShowBottomBarChange: (Boolean) -> Unit = {}
 ) {
     val context = LocalContext.current
     val prefs   = remember { context.getSharedPreferences("fatimarket_prefs", 0) }
@@ -1000,7 +1033,9 @@ private fun AdminItemListContent(
     var selectedItem by remember { mutableStateOf<Item?>(null) }
 
     // hide bottom bar whenever we are in edit OR detail mode
-    val showBar = editingItem == null && selectedItem == null
+    val showBar = remember(editingItem, selectedItem) {
+        editingItem == null && selectedItem == null
+    }
 
     fun loadItems() {
         scope.launch {
@@ -1017,6 +1052,10 @@ private fun AdminItemListContent(
     }
 
     LaunchedEffect(Unit) { loadItems() }
+
+    LaunchedEffect(showBar) {
+        onShowBottomBarChange(showBar)
+    }
 
     // Back-press: close detail first, then edit, then bubble up
     BackHandler(enabled = selectedItem != null || editingItem != null) {
@@ -1120,8 +1159,9 @@ private fun AdminItemListContent(
                                     )
                                 } else {
                                     AdminViewOnlyItemCard(
-                                        item    = item,
-                                        onClick = { selectedItem = item }
+                                        item         = item,
+                                        onClick      = { selectedItem = item },
+                                        onEditClick  = { editingItem = it }
                                     )
                                 }
                             }
@@ -1136,7 +1176,7 @@ private fun AdminItemListContent(
 
 // ── View-only card (Public / Reserved / Sold — no Edit or Chat buttons) ────────
 @Composable
-private fun AdminViewOnlyItemCard(item: Item, onClick: () -> Unit = {}) {
+private fun AdminViewOnlyItemCard(item: Item, onClick: () -> Unit = {}, onEditClick: (Item) -> Unit = {}) {
     Card(
         modifier  = Modifier.fillMaxWidth().clickable(onClick = onClick),
         shape     = RoundedCornerShape(14.dp),
@@ -1231,7 +1271,7 @@ private fun AdminViewOnlyItemCard(item: Item, onClick: () -> Unit = {}) {
                         horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         Icon(Icons.Filled.MonetizationOn, null,
                             tint = DarkGreen, modifier = Modifier.size(14.dp))
-                        Text("${item.pricePoints} pts", fontWeight = FontWeight.Bold,
+                        Text("${if (item.status.lowercase() in listOf("public", "reserved", "sold")) item.markupPoints else item.pricePoints} pts", fontWeight = FontWeight.Bold,
                             color = DarkGreen, fontSize = 13.sp)
                     }
                 }
@@ -1241,7 +1281,7 @@ private fun AdminViewOnlyItemCard(item: Item, onClick: () -> Unit = {}) {
                     maxLines = 3, overflow = TextOverflow.Ellipsis)
 
                 // ── Markup info row ───────────────────────────────────────────
-                if (item.markupPoints > 0) {
+                if (item.markupPoints > 0 && item.status.lowercase() != "public") {
                     HorizontalDivider()
                     Row(verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -1253,16 +1293,29 @@ private fun AdminViewOnlyItemCard(item: Item, onClick: () -> Unit = {}) {
                     }
                 }
 
-                // ── Tap-to-view hint ──────────────────────────────────────────
+                // ── Action buttons ──────────────────────────────────────────
                 Row(
-                    verticalAlignment     = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.End,
-                    modifier              = Modifier.fillMaxWidth()
+                    modifier              = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment     = Alignment.CenterVertically
                 ) {
-                    Text("View details", fontSize = 12.sp, color = DarkGreen,
-                        fontWeight = FontWeight.SemiBold)
-                    Icon(Icons.Filled.ChevronRight, null,
-                        tint = DarkGreen, modifier = Modifier.size(16.dp))
+                    Row(
+                        verticalAlignment     = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier              = Modifier.weight(1f)
+                    ) {
+                        Text("View details", fontSize = 12.sp, color = DarkGreen,
+                            fontWeight = FontWeight.SemiBold)
+                        Icon(Icons.Filled.ChevronRight, null,
+                            tint = DarkGreen, modifier = Modifier.size(16.dp))
+                    }
+                    IconButton(
+                        onClick = { onEditClick(item) },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(Icons.Filled.Edit, null,
+                            tint = DarkGreen, modifier = Modifier.size(18.dp))
+                    }
                 }
             }
         }
@@ -1481,7 +1534,7 @@ private fun AdminItemDetailPage(item: Item, onBack: () -> Unit) {
                             Icon(Icons.Filled.MonetizationOn, null,
                                 tint = DarkGreen, modifier = Modifier.size(20.dp))
                             Text(
-                                "${item.pricePoints} pts",
+                                "${if (item.status.lowercase() in listOf("public", "reserved", "sold")) item.markupPoints else item.pricePoints} pts",
                                 fontWeight = FontWeight.ExtraBold,
                                 fontSize   = 20.sp,
                                 color      = DarkGreen
@@ -2142,6 +2195,47 @@ private fun ProfileNavItem(
 
 @Composable
 private fun AdminHomeContent(onMenuClick: () -> Unit) {
+    val context = LocalContext.current
+    val prefs   = remember { context.getSharedPreferences("fatimarket_prefs", 0) }
+    val token   = remember { prefs.getString("auth_token", "") ?: "" }
+
+    var totalStudents by remember { mutableStateOf(0) }
+    var pendingStudents by remember { mutableStateOf(0) }
+    var totalProducts by remember { mutableStateOf(0) }
+    var isLoading by remember { mutableStateOf(true) }
+
+    // Fetch dashboard data from API
+    LaunchedEffect(Unit) {
+        try {
+            val request = Request.Builder()
+                .url("https://fati-api.alertaraqc.com/api/admin/dashboard")
+                .header("Authorization", "Bearer $token")
+                .header("Accept", "application/json")
+                .get()
+                .build()
+            adminHttpClient.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    val body = response.body?.string() ?: ""
+                    val json = JSONObject(body)
+                    val dataObj = json.optJSONObject("data")
+
+                    if (dataObj != null) {
+                        val usersObj = dataObj.optJSONObject("users")
+                        val itemsObj = dataObj.optJSONObject("items")
+
+                        totalStudents = usersObj?.optInt("total_students", 0) ?: 0
+                        pendingStudents = usersObj?.optInt("pending_students", 0) ?: 0
+                        totalProducts = itemsObj?.optInt("total_items", 0) ?: 0
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            // Keep default values
+        } finally {
+            isLoading = false
+        }
+    }
+
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         AdminPageHeader(title = "Dashboard", onMenuClick = onMenuClick)
         Column(modifier = Modifier.padding(16.dp)) {
@@ -2149,12 +2243,12 @@ private fun AdminHomeContent(onMenuClick: () -> Unit) {
                 color = DarkGreen, letterSpacing = 1.sp,
                 modifier = Modifier.padding(bottom = 12.dp, start = 4.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                StatCard("Total Students", "--", Icons.Filled.School, Modifier.weight(1f))
-                StatCard("Pending", "--", Icons.Filled.HourglassEmpty, Modifier.weight(1f))
+                StatCard("Total Students", if (isLoading) "--" else totalStudents.toString(), Icons.Filled.School, Modifier.weight(1f))
+                StatCard("Pending", if (isLoading) "--" else pendingStudents.toString(), Icons.Filled.HourglassEmpty, Modifier.weight(1f))
             }
             Spacer(modifier = Modifier.height(12.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                StatCard("Products", "--", Icons.Filled.Storefront, Modifier.weight(1f))
+                StatCard("Products", if (isLoading) "--" else totalProducts.toString(), Icons.Filled.Storefront, Modifier.weight(1f))
                 StatCard("Active Chats", "--", Icons.Filled.Chat, Modifier.weight(1f))
             }
         }
@@ -5729,9 +5823,37 @@ fun AdminPageHeader(
 ) {
     val context = LocalContext.current
     val prefs   = remember { context.getSharedPreferences("fatimarket_prefs", 0) }
-    val walletPoints = remember { prefs.getInt("user_wallet_points", 0) }
+    val token   = remember { prefs.getString("auth_token", "") ?: "" }
 
-    var isPointsVisible by remember { mutableStateOf(false) }
+    var walletPoints by remember { mutableStateOf(0) }
+    var isPointsVisible by remember { mutableStateOf(prefs.getBoolean("points_visibility", false)) }
+
+    // Fetch wallet points from API
+    LaunchedEffect(Unit) {
+        try {
+            val request = Request.Builder()
+                .url("https://fati-api.alertaraqc.com/api/wallet")
+                .header("Authorization", "Bearer $token")
+                .header("Accept", "application/json")
+                .get()
+                .build()
+            adminHttpClient.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    val body = response.body?.string() ?: ""
+                    val json = JSONObject(body)
+                    val dataObj = json.optJSONObject("data")
+                    walletPoints = dataObj?.optInt("wallet_points", 0) ?: 0
+                }
+            }
+        } catch (e: Exception) {
+            // Keep default value
+        }
+    }
+
+    // Save visibility preference when it changes
+    LaunchedEffect(isPointsVisible) {
+        prefs.edit().putBoolean("points_visibility", isPointsVisible).apply()
+    }
 
     Column(modifier = Modifier.fillMaxWidth()
         .background(Brush.verticalGradient(listOf(DarkGreen, DarkGreenLight)))) {
