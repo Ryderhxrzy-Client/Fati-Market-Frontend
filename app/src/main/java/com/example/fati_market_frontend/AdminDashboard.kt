@@ -498,9 +498,10 @@ fun AdminDashboard(isDarkMode: Boolean, onThemeToggle: () -> Unit, onLogout: () 
             ) {
                 if (drawerPage != null) {
                     DrawerPageContent(
-                        page        = drawerPage!!,
-                        onMenuClick = openDrawer,
-                        onGoToChat  = { drawerPage = null; selectedTab = AdminTab.CHAT }
+                        page             = drawerPage!!,
+                        onMenuClick      = openDrawer,
+                        onGoToChat       = { drawerPage = null; selectedTab = AdminTab.CHAT },
+                        onNavigateToPage = { drawerPage = it }
                     )
                 } else {
                     when (selectedTab) {
@@ -762,40 +763,53 @@ private fun DrawerSubItem(label: String, selected: Boolean, onClick: () -> Unit)
 }
 
 @Composable
-private fun DrawerPageContent(page: DrawerPage, onMenuClick: () -> Unit, onGoToChat: () -> Unit = {}) {
+private fun DrawerPageContent(
+    page: DrawerPage,
+    onMenuClick: () -> Unit,
+    onGoToChat: () -> Unit = {},
+    onNavigateToPage: (DrawerPage) -> Unit = {}
+) {
     when (page) {
-        DrawerPage.PrivateOffers  -> AdminPrivateOffersContent(onMenuClick = onMenuClick, onGoToChat = onGoToChat)
+        DrawerPage.PrivateOffers  -> AdminPrivateOffersContent(
+            onMenuClick      = onMenuClick,
+            onGoToChat       = onGoToChat,
+            onNavigateToPage = onNavigateToPage
+        )
         DrawerPage.AcquiredItems  -> AdminItemListContent(
-            title        = "Acquired Items",
-            status       = "acquired",
-            emptyText    = "No acquired items at the moment.",
-            showActions  = true,
-            onMenuClick  = onMenuClick,
-            onGoToChat   = onGoToChat
+            title            = "Acquired Items",
+            status           = "acquired",
+            emptyText        = "No acquired items at the moment.",
+            showActions      = true,
+            onMenuClick      = onMenuClick,
+            onGoToChat       = onGoToChat,
+            onNavigateToPage = onNavigateToPage
         )
         DrawerPage.PublicListings -> AdminItemListContent(
-            title        = "Public Listings",
-            status       = "public",
-            emptyText    = "No public listings at the moment.",
-            showActions  = false,
-            onMenuClick  = onMenuClick,
-            onGoToChat   = onGoToChat
+            title            = "Public Listings",
+            status           = "public",
+            emptyText        = "No public listings at the moment.",
+            showActions      = false,
+            onMenuClick      = onMenuClick,
+            onGoToChat       = onGoToChat,
+            onNavigateToPage = onNavigateToPage
         )
         DrawerPage.ReservedItems  -> AdminItemListContent(
-            title        = "Reserved Items",
-            status       = "reserved",
-            emptyText    = "No reserved items at the moment.",
-            showActions  = false,
-            onMenuClick  = onMenuClick,
-            onGoToChat   = onGoToChat
+            title            = "Reserved Items",
+            status           = "reserved",
+            emptyText        = "No reserved items at the moment.",
+            showActions      = false,
+            onMenuClick      = onMenuClick,
+            onGoToChat       = onGoToChat,
+            onNavigateToPage = onNavigateToPage
         )
         DrawerPage.SoldItems      -> AdminItemListContent(
-            title        = "Sold Items",
-            status       = "sold",
-            emptyText    = "No sold items at the moment.",
-            showActions  = false,
-            onMenuClick  = onMenuClick,
-            onGoToChat   = onGoToChat
+            title            = "Sold Items",
+            status           = "sold",
+            emptyText        = "No sold items at the moment.",
+            showActions      = false,
+            onMenuClick      = onMenuClick,
+            onGoToChat       = onGoToChat,
+            onNavigateToPage = onNavigateToPage
         )
         else -> Column(modifier = Modifier.fillMaxSize()) {
             AdminPageHeader(title = page.label, onMenuClick = onMenuClick)
@@ -837,7 +851,11 @@ private enum class ItemStatus(val displayName: String) {
 
 // ── Private Offers ─────────────────────────────────────────────────────────────
 @Composable
-private fun AdminPrivateOffersContent(onMenuClick: () -> Unit, onGoToChat: () -> Unit = {}) {
+private fun AdminPrivateOffersContent(
+    onMenuClick: () -> Unit,
+    onGoToChat: () -> Unit = {},
+    onNavigateToPage: (DrawerPage) -> Unit = {}
+) {
     val context = LocalContext.current
     val prefs   = remember { context.getSharedPreferences("fatimarket_prefs", 0) }
     val token   = remember { prefs.getString("auth_token", "") ?: "" }
@@ -878,13 +896,21 @@ private fun AdminPrivateOffersContent(onMenuClick: () -> Unit, onGoToChat: () ->
                     token = token,
                     onBack = { editingItem = null },
                     onItemUpdated = { updatedItem ->
-                        itemList = itemList.map {
-                            if (it.itemId == updatedItem.itemId) {
-                                it.copy(
-                                    status = updatedItem.status,
-                                    markupPoints = updatedItem.markupPoints
-                                )
-                            } else it
+                        if (updatedItem.status.lowercase() != "private") {
+                            val targetPage = when (updatedItem.status.lowercase()) {
+                                "acquired" -> DrawerPage.AcquiredItems
+                                "public"   -> DrawerPage.PublicListings
+                                "reserved" -> DrawerPage.ReservedItems
+                                "sold"     -> DrawerPage.SoldItems
+                                else       -> null
+                            }
+                            if (targetPage != null) onNavigateToPage(targetPage)
+                        } else {
+                            itemList = itemList.map {
+                                if (it.itemId == updatedItem.itemId) {
+                                    it.copy(status = updatedItem.status, markupPoints = updatedItem.markupPoints)
+                                } else it
+                            }
                         }
                         editingItem = null
                     }
@@ -938,7 +964,8 @@ private fun AdminPrivateOffersContent(onMenuClick: () -> Unit, onGoToChat: () ->
                                         }
                                     },
                                     onGoToChat    = onGoToChat,
-                                    onEditClick   = { editingItem = it }
+                                    onEditClick   = { editingItem = it },
+                                    onPointsSent  = { loadItems() }
                                 )
                             }
                             item { Spacer(Modifier.height(8.dp)) }
@@ -958,7 +985,8 @@ private fun AdminItemListContent(
     emptyText: String,
     showActions: Boolean,
     onMenuClick: () -> Unit,
-    onGoToChat: () -> Unit = {}
+    onGoToChat: () -> Unit = {},
+    onNavigateToPage: (DrawerPage) -> Unit = {}
 ) {
     val context = LocalContext.current
     val prefs   = remember { context.getSharedPreferences("fatimarket_prefs", 0) }
@@ -1007,10 +1035,22 @@ private fun AdminItemListContent(
                     token = token,
                     onBack = { editingItem = null },
                     onItemUpdated = { updatedItem ->
-                        itemList = itemList.map {
-                            if (it.itemId == updatedItem.itemId)
-                                it.copy(status = updatedItem.status, markupPoints = updatedItem.markupPoints)
-                            else it
+                        if (updatedItem.status.lowercase() != status.lowercase()) {
+                            val targetPage = when (updatedItem.status.lowercase()) {
+                                "private"  -> DrawerPage.PrivateOffers
+                                "acquired" -> DrawerPage.AcquiredItems
+                                "public"   -> DrawerPage.PublicListings
+                                "reserved" -> DrawerPage.ReservedItems
+                                "sold"     -> DrawerPage.SoldItems
+                                else       -> null
+                            }
+                            if (targetPage != null) onNavigateToPage(targetPage)
+                        } else {
+                            itemList = itemList.map {
+                                if (it.itemId == updatedItem.itemId)
+                                    it.copy(status = updatedItem.status, markupPoints = updatedItem.markupPoints)
+                                else it
+                            }
                         }
                         editingItem = null
                     }
@@ -1075,7 +1115,8 @@ private fun AdminItemListContent(
                                             }
                                         },
                                         onGoToChat  = onGoToChat,
-                                        onEditClick = { editingItem = it }
+                                        onEditClick = { editingItem = it },
+                                        onPointsSent = { loadItems() }
                                     )
                                 } else {
                                     AdminViewOnlyItemCard(
@@ -1173,8 +1214,11 @@ private fun AdminViewOnlyItemCard(item: Item, onClick: () -> Unit = {}) {
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment     = Alignment.CenterVertically
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(
+                        modifier              = Modifier.weight(1f),
+                        verticalAlignment     = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
                         Icon(Icons.Filled.Person, null,
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(14.dp))
@@ -1543,15 +1587,81 @@ private fun AdminPrivateOfferCard(
     token: String,
     onStatusSaved: (String) -> Unit,
     onGoToChat: () -> Unit = {},
-    onEditClick: (Item) -> Unit = {}
+    onEditClick: (Item) -> Unit = {},
+    onPointsSent: () -> Unit = {}
 ) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
 
     var showChatDialog    by remember { mutableStateOf(false) }
     var chatText          by remember { mutableStateOf("") }
     var isSendingChat     by remember { mutableStateOf(false) }
     var chatError         by remember { mutableStateOf<String?>(null) }
     var chatSent          by remember { mutableStateOf(false) }
+
+    var showPointsDialog  by remember { mutableStateOf(false) }
+    var isSendingPoints   by remember { mutableStateOf(false) }
+    var pointsError       by remember { mutableStateOf<String?>(null) }
+    var pointsSuccess     by remember { mutableStateOf(false) }
+
+    // ── Send Points Dialog ────────────────────────────────────────────────────
+    if (showPointsDialog) {
+        AlertDialog(
+            onDismissRequest = {
+                if (!isSendingPoints) { showPointsDialog = false; pointsError = null; pointsSuccess = false }
+            },
+            title = { Text("Send Points", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("This will send ${item.pricePoints} points to ${item.sellerEmail} and record a transaction for this item.", fontSize = 14.sp)
+                    if (pointsSuccess) {
+                        Text("Points sent and transaction recorded successfully!", color = DarkGreen, fontWeight = FontWeight.SemiBold)
+                    }
+                    pointsError?.let {
+                        Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                    }
+                }
+            },
+            confirmButton = {
+                if (pointsSuccess) {
+                    Button(onClick = { showPointsDialog = false; pointsSuccess = false; onPointsSent() }, colors = ButtonDefaults.buttonColors(containerColor = DarkGreen)) {
+                        Text("Close", color = Color.White)
+                    }
+                } else {
+                    Button(
+                        onClick = {
+                            scope.launch {
+                                isSendingPoints = true
+                                pointsError = null
+                                val okPoints = withContext(Dispatchers.IO) { sendPointsToUser(token, item.sellerId, item.pricePoints, "purchase") }
+                                if (okPoints) {
+                                    val okTrans = withContext(Dispatchers.IO) { insertTransaction(token, item.itemId, item.pricePoints) }
+                                    if (okTrans) {
+                                        pointsSuccess = true
+                                    } else {
+                                        pointsError = "Points sent, but failed to record transaction."
+                                    }
+                                } else {
+                                    pointsError = "Failed to send points. Please check your connection."
+                                }
+                                isSendingPoints = false
+                            }
+                        },
+                        enabled = !isSendingPoints,
+                        colors = ButtonDefaults.buttonColors(containerColor = DarkGreen)
+                    ) {
+                        if (isSendingPoints) CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp)
+                        else Text("Confirm Send", color = Color.White)
+                    }
+                }
+            },
+            dismissButton = {
+                if (!pointsSuccess) {
+                    TextButton(onClick = { showPointsDialog = false }, enabled = !isSendingPoints) { Text("Cancel") }
+                }
+            }
+        )
+    }
 
     // ── Chat dialog ───────────────────────────────────────────────────────────
     if (showChatDialog) {
@@ -1738,8 +1848,11 @@ private fun AdminPrivateOfferCard(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment     = Alignment.CenterVertically
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(
+                        modifier              = Modifier.weight(1f),
+                        verticalAlignment     = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
                         Icon(Icons.Filled.Person, null,
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(14.dp))
@@ -1761,33 +1874,61 @@ private fun AdminPrivateOfferCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 3, overflow = TextOverflow.Ellipsis)
 
+                // ── Markup Display (Specifically for Acquired) ───────────────
+                if (item.status.lowercase() == "acquired" && item.markupPoints > 0) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().background(Color(0xFF1565C0).copy(alpha = 0.05f), RoundedCornerShape(8.dp)).padding(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(Icons.Filled.TrendingUp, null, tint = Color(0xFF1565C0), modifier = Modifier.size(16.dp))
+                        Text("Markup: ${item.markupPoints} pts", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF1565C0))
+                    }
+                }
+
                 HorizontalDivider()
 
                 // ── Action buttons ─────────────────────────────────────────────
-                Row(
-                    modifier              = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Button(
-                        onClick = { onEditClick(item) },
-                        modifier = Modifier.weight(1f),
-                        shape    = RoundedCornerShape(10.dp),
-                        colors   = ButtonDefaults.buttonColors(containerColor = DarkGreen)
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        modifier              = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Icon(Icons.Filled.Edit, null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("Edit Item", fontWeight = FontWeight.SemiBold)
+                        Button(
+                            onClick = { onEditClick(item) },
+                            modifier = Modifier.weight(1f),
+                            shape    = RoundedCornerShape(10.dp),
+                            colors   = ButtonDefaults.buttonColors(containerColor = DarkGreen)
+                        ) {
+                            Icon(Icons.Filled.Edit, null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Edit Item", fontWeight = FontWeight.SemiBold)
+                        }
+                        OutlinedButton(
+                            onClick  = { showChatDialog = true },
+                            modifier = Modifier.weight(1f),
+                            shape    = RoundedCornerShape(10.dp),
+                            border   = BorderStroke(1.dp, DarkGreen),
+                            colors   = ButtonDefaults.outlinedButtonColors(contentColor = DarkGreen)
+                        ) {
+                            Icon(Icons.Filled.Chat, null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Chat Seller", fontWeight = FontWeight.SemiBold)
+                        }
                     }
-                    OutlinedButton(
-                        onClick  = { showChatDialog = true },
-                        modifier = Modifier.weight(1f),
-                        shape    = RoundedCornerShape(10.dp),
-                        border   = BorderStroke(1.dp, DarkGreen),
-                        colors   = ButtonDefaults.outlinedButtonColors(contentColor = DarkGreen)
-                    ) {
-                        Icon(Icons.Filled.Chat, null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("Chat Seller", fontWeight = FontWeight.SemiBold)
+
+                    // ── Send Points Button (Acquired only) ───────────────────
+                    if (item.status.lowercase() == "acquired") {
+                        Button(
+                            onClick = { showPointsDialog = true },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1565C0))
+                        ) {
+                            Icon(Icons.Filled.Send, null, modifier = Modifier.size(16.dp), tint = Color.White)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Send Points & Finalize", color = Color.White, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             }
@@ -2042,6 +2183,7 @@ data class ChatItem(
     val itemId: Int,
     val title: String,
     val description: String,
+    val pricePoints: Int,
     val markupPoints: Int,
     val sellerEmail: String,
     val status: String,
@@ -2209,6 +2351,40 @@ private fun sendMessage(token: String, itemId: Int, receiverId: Int, message: St
     }.toString()
     val request = Request.Builder()
         .url("https://fati-api.alertaraqc.com/api/messages/$itemId")
+        .header("Authorization", "Bearer $token")
+        .header("Accept", "application/json")
+        .post(json.toRequestBody("application/json".toMediaType()))
+        .build()
+    return try {
+        adminHttpClient.newCall(request).execute().use { it.isSuccessful }
+    } catch (_: Exception) { false }
+}
+
+private fun sendPointsToUser(token: String, userId: Int, points: Int, reason: String): Boolean {
+    val json = JSONObject().apply {
+        put("user_id", userId)
+        put("points", points)
+        put("reason", reason)
+    }.toString()
+    val request = Request.Builder()
+        .url("https://fati-api.alertaraqc.com/api/admin/send-points")
+        .header("Authorization", "Bearer $token")
+        .header("Accept", "application/json")
+        .post(json.toRequestBody("application/json".toMediaType()))
+        .build()
+    return try {
+        adminHttpClient.newCall(request).execute().use { it.isSuccessful }
+    } catch (_: Exception) { false }
+}
+
+private fun insertTransaction(token: String, itemId: Int, points: Int): Boolean {
+    val json = JSONObject().apply {
+        put("item_id", itemId)
+        put("payment_method", "points")
+        put("points_used", points)
+    }.toString()
+    val request = Request.Builder()
+        .url("https://fati-api.alertaraqc.com/api/transactions")
         .header("Authorization", "Bearer $token")
         .header("Accept", "application/json")
         .post(json.toRequestBody("application/json".toMediaType()))
@@ -3121,7 +3297,7 @@ private fun ChatDetailContent(
                                         tint = Color.White.copy(alpha = 0.85f),
                                         modifier = Modifier.size(11.dp))
                                     Text(
-                                        "${item.markupPoints} pts",
+                                        "${item.pricePoints} pts",
                                         fontSize = 11.sp,
                                         color = Color.White.copy(alpha = 0.85f),
                                         fontWeight = FontWeight.Medium
@@ -3596,7 +3772,7 @@ private fun ChatItemDetailPage(item: ChatItem, onBack: () -> Unit) {
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Icon(Icons.Filled.MonetizationOn, null, tint = DarkGreen, modifier = Modifier.size(22.dp))
-                        Text("${item.markupPoints} pts", fontWeight = FontWeight.Bold, color = DarkGreen, fontSize = 20.sp)
+                        Text("${item.pricePoints} pts", fontWeight = FontWeight.Bold, color = DarkGreen, fontSize = 20.sp)
                     }
                     val statusColor = when (item.status.lowercase()) {
                         "approved" -> DarkGreen
@@ -3796,7 +3972,7 @@ private fun EditItemPage(
                                 tint = DarkGreen, modifier = Modifier.size(20.dp))
                             Spacer(Modifier.width(8.dp))
                             Text(
-                                "${item.markupPoints} pts",
+                                "${item.pricePoints} pts",
                                 fontSize = 16.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = DarkGreen
@@ -4430,6 +4606,7 @@ private fun EditItemPageForList(
                                         itemId = item.itemId,
                                         title = item.title,
                                         description = item.description,
+                                        pricePoints = item.pricePoints,
                                         markupPoints = markupPts ?: item.markupPoints,
                                         sellerEmail = item.sellerEmail,
                                         status = editStatus,
@@ -5554,6 +5731,8 @@ fun AdminPageHeader(
     val prefs   = remember { context.getSharedPreferences("fatimarket_prefs", 0) }
     val walletPoints = remember { prefs.getInt("user_wallet_points", 0) }
 
+    var isPointsVisible by remember { mutableStateOf(false) }
+
     Column(modifier = Modifier.fillMaxWidth()
         .background(Brush.verticalGradient(listOf(DarkGreen, DarkGreenLight)))) {
         Spacer(modifier = Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
@@ -5569,7 +5748,9 @@ fun AdminPageHeader(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .padding(end = 4.dp)
-                    .background(Color.White.copy(alpha = 0.18f), RoundedCornerShape(50))
+                    .clip(RoundedCornerShape(50))
+                    .background(Color.White.copy(alpha = 0.18f))
+                    .clickable { isPointsVisible = !isPointsVisible }
                     .padding(horizontal = 10.dp, vertical = 4.dp)
             ) {
                 Icon(
@@ -5580,10 +5761,17 @@ fun AdminPageHeader(
                 )
                 Spacer(modifier = Modifier.width(4.dp))
                 Text(
-                    text = "$walletPoints pts",
+                    text = if (isPointsVisible) "$walletPoints pts" else "... pts",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = Color.White
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Icon(
+                    imageVector = if (isPointsVisible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
+                    contentDescription = if (isPointsVisible) "Hide points" else "Show points",
+                    tint = Color.White.copy(alpha = 0.8f),
+                    modifier = Modifier.size(14.dp)
                 )
             }
             Box {
@@ -5639,6 +5827,7 @@ private fun fetchChatItem(token: String, itemId: Int): ChatItem? {
                 itemId       = obj.optInt("item_id"),
                 title        = obj.optString("title"),
                 description  = obj.optString("description"),
+                pricePoints  = obj.optInt("price_points").takeIf { it != 0 } ?: obj.optInt("points").takeIf { it != 0 } ?: obj.optInt("price_points"),
                 markupPoints = obj.optInt("markup_points"),
                 sellerEmail  = obj.optString("seller_email"),
                 status       = obj.optString("status"),
@@ -5668,21 +5857,22 @@ private fun fetchItems(token: String, status: String): List<Item> {
                 else             -> org.json.JSONArray(raw)
             }
             (0 until arr.length()).map { i ->
-                val obj       = arr.getJSONObject(i)
-                val photosArr = obj.optJSONArray("photos")
+                val rawObj    = arr.getJSONObject(i)
+                val obj       = rawObj.optJSONObject("item") ?: rawObj
+                val photosArr = obj.optJSONArray("photos") ?: rawObj.optJSONArray("photos")
                 val photos    = if (photosArr != null) {
                     (0 until photosArr.length()).map { j -> photosArr.getString(j) }
                 } else emptyList()
                 Item(
                     itemId       = obj.optInt("item_id"),
                     sellerId     = obj.optInt("seller_id"),
-                    sellerEmail  = obj.optString("seller_email"),
+                    sellerEmail  = obj.optString("seller_email").takeIf { it.isNotBlank() } ?: rawObj.optString("seller_email"),
                     title        = obj.optString("title"),
                     description  = obj.optString("description"),
                     categoryId   = obj.optInt("category_id"),
-                    pricePoints  = obj.optInt("price_points"),
+                    pricePoints  = obj.optInt("price_points").takeIf { it != 0 } ?: obj.optInt("points").takeIf { it != 0 } ?: obj.optInt("price_points"),
                     markupPoints = obj.optInt("markup_points"),
-                    status       = obj.optString("status"),
+                    status       = obj.optString("status").takeIf { it.isNotBlank() } ?: rawObj.optString("status"),
                     photos       = photos,
                     createdAt    = obj.optString("created_at")
                 )
