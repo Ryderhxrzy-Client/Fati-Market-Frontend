@@ -568,6 +568,8 @@ private fun MarketplaceHeader(
     val context      = LocalContext.current
     val walletPoints = remember { context.getSharedPreferences("fatimarket_prefs", 0).getInt("user_wallet_points", 0) }
 
+    var isPointsVisible by remember { mutableStateOf(false) }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -595,12 +597,26 @@ private fun MarketplaceHeader(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier          = Modifier
                     .padding(end = 4.dp)
-                    .background(Color.White.copy(alpha = 0.18f), RoundedCornerShape(50))
+                    .clip(RoundedCornerShape(50))
+                    .background(Color.White.copy(alpha = 0.18f))
+                    .clickable { isPointsVisible = !isPointsVisible }
                     .padding(horizontal = 10.dp, vertical = 4.dp)
             ) {
                 Icon(Icons.Filled.AccountBalanceWallet, null, tint = Color.White, modifier = Modifier.size(15.dp))
                 Spacer(Modifier.width(4.dp))
-                Text("$walletPoints pts", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                Text(
+                    text = if (isPointsVisible) "$walletPoints pts" else "... pts",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color.White
+                )
+                Spacer(Modifier.width(6.dp))
+                Icon(
+                    imageVector = if (isPointsVisible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
+                    contentDescription = if (isPointsVisible) "Hide points" else "Show points",
+                    tint = Color.White.copy(alpha = 0.8f),
+                    modifier = Modifier.size(14.dp)
+                )
             }
             Box {
                 IconButton(onClick = onFavoritesClick) {
@@ -2169,21 +2185,22 @@ private fun fetchItems(token: String, status: String): List<Item> {
             val json = JSONObject(raw)
             val arr  = json.getJSONArray("data")
             (0 until arr.length()).map { i ->
-                val obj       = arr.getJSONObject(i)
-                val photosArr = obj.optJSONArray("photos")
+                val rawObj    = arr.getJSONObject(i)
+                val obj       = rawObj.optJSONObject("item") ?: rawObj
+                val photosArr = obj.optJSONArray("photos") ?: rawObj.optJSONArray("photos")
                 val photos    = if (photosArr != null) {
                     (0 until photosArr.length()).map { j -> photosArr.getString(j) }
                 } else emptyList()
                 Item(
                     itemId       = obj.optInt("item_id"),
                     sellerId     = obj.optInt("seller_id"),
-                    sellerEmail  = obj.optString("seller_email"),
+                    sellerEmail  = obj.optString("seller_email").takeIf { it.isNotBlank() } ?: rawObj.optString("seller_email"),
                     title        = obj.optString("title"),
                     description  = obj.optString("description"),
                     categoryId   = obj.optInt("category_id"),
-                    pricePoints  = obj.optInt("price_points"),
+                    pricePoints  = obj.optInt("price_points").takeIf { it != 0 } ?: obj.optInt("points").takeIf { it != 0 } ?: rawObj.optInt("price_points"),
                     markupPoints = obj.optInt("markup_points"),
-                    status       = obj.optString("status"),
+                    status       = obj.optString("status").takeIf { it.isNotBlank() } ?: rawObj.optString("status"),
                     photos       = photos,
                     createdAt    = obj.optString("created_at")
                 )
@@ -2735,25 +2752,24 @@ private fun fetchFavoriteItems(token: String): List<Item> {
                 org.json.JSONArray(raw)
             }
             (0 until arr.length()).mapNotNull { i ->
-                val obj = arr.optJSONObject(i) ?: return@mapNotNull null
-                // favorites may be nested under "item" key
-                val itemObj = obj.optJSONObject("item") ?: obj
-                val photosArr = itemObj.optJSONArray("photos")
+                val rawObj    = arr.optJSONObject(i) ?: return@mapNotNull null
+                val obj       = rawObj.optJSONObject("item") ?: rawObj
+                val photosArr = obj.optJSONArray("photos") ?: rawObj.optJSONArray("photos")
                 val photos = if (photosArr != null) {
                     (0 until photosArr.length()).map { j -> photosArr.getString(j) }
                 } else emptyList()
                 Item(
-                    itemId       = itemObj.optInt("item_id"),
-                    sellerId     = itemObj.optInt("seller_id"),
-                    sellerEmail  = itemObj.optString("seller_email"),
-                    title        = itemObj.optString("title"),
-                    description  = itemObj.optString("description"),
-                    categoryId   = itemObj.optInt("category_id"),
-                    pricePoints  = itemObj.optInt("price_points"),
-                    markupPoints = itemObj.optInt("markup_points"),
-                    status       = itemObj.optString("status"),
+                    itemId       = obj.optInt("item_id"),
+                    sellerId     = obj.optInt("seller_id"),
+                    sellerEmail  = obj.optString("seller_email").takeIf { it.isNotBlank() } ?: rawObj.optString("seller_email"),
+                    title        = obj.optString("title"),
+                    description  = obj.optString("description"),
+                    categoryId   = obj.optInt("category_id"),
+                    pricePoints  = obj.optInt("price_points").takeIf { it != 0 } ?: obj.optInt("points").takeIf { it != 0 } ?: rawObj.optInt("price_points"),
+                    markupPoints = obj.optInt("markup_points"),
+                    status       = obj.optString("status").takeIf { it.isNotBlank() } ?: rawObj.optString("status"),
                     photos       = photos,
-                    createdAt    = itemObj.optString("created_at")
+                    createdAt    = obj.optString("created_at")
                 )
             }
         } catch (_: Exception) { emptyList() }
@@ -2827,7 +2843,7 @@ private fun fetchItemDetail(token: String, itemId: Int): Item? {
                 title        = obj.optString("title"),
                 description  = obj.optString("description"),
                 categoryId   = obj.optInt("category_id"),
-                pricePoints  = obj.optInt("price_points"),
+                pricePoints  = obj.optInt("price_points").takeIf { it != 0 } ?: obj.optInt("points"),
                 markupPoints = obj.optInt("markup_points"),
                 status       = obj.optString("status"),
                 photos       = photos,
