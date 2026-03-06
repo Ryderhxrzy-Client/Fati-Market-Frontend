@@ -565,10 +565,40 @@ private fun MarketplaceHeader(
     favoritesCount: Int = 0,
     onFavoritesClick: () -> Unit = {}
 ) {
-    val context      = LocalContext.current
-    val walletPoints = remember { context.getSharedPreferences("fatimarket_prefs", 0).getInt("user_wallet_points", 0) }
+    val context = LocalContext.current
+    val prefs   = remember { context.getSharedPreferences("fatimarket_prefs", 0) }
+    val token   = remember { prefs.getString("auth_token", "") ?: "" }
 
-    var isPointsVisible by remember { mutableStateOf(false) }
+    var walletPoints by remember { mutableStateOf(0) }
+    var isPointsVisible by remember { mutableStateOf(prefs.getBoolean("points_visibility", false)) }
+
+    // Fetch wallet points from API
+    LaunchedEffect(Unit) {
+        try {
+            val request = okhttp3.Request.Builder()
+                .url("https://fati-api.alertaraqc.com/api/wallet")
+                .header("Authorization", "Bearer $token")
+                .header("Accept", "application/json")
+                .get()
+                .build()
+            val httpClient = okhttp3.OkHttpClient()
+            httpClient.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    val body = response.body?.string() ?: ""
+                    val json = org.json.JSONObject(body)
+                    val dataObj = json.optJSONObject("data")
+                    walletPoints = dataObj?.optInt("wallet_points", 0) ?: 0
+                }
+            }
+        } catch (e: Exception) {
+            // Keep default value
+        }
+    }
+
+    // Save visibility preference when it changes
+    LaunchedEffect(isPointsVisible) {
+        prefs.edit().putBoolean("points_visibility", isPointsVisible).apply()
+    }
 
     Column(
         modifier = Modifier
