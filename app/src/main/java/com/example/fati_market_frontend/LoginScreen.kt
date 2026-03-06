@@ -53,6 +53,7 @@ fun LoginScreen(navController: NavController) {
     var isLoading by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var successMessage by remember { mutableStateOf<String?>(null) }
+    var selectedRole by remember { mutableStateOf("student") } // "student" or "admin"
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -249,7 +250,6 @@ fun LoginScreen(navController: NavController) {
                     )
                 }
 
-                // ── Error Message ─────────────────────────────────────────────────
                 errorMessage?.let { msg ->
                     Text(
                         text = msg,
@@ -259,6 +259,44 @@ fun LoginScreen(navController: NavController) {
                             .fillMaxWidth()
                             .padding(bottom = 12.dp)
                     )
+                }
+
+                // ── Role Selection Toggle ──────────────────────────────────────────
+                Text(
+                    text = "Login as:",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 20.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                        .padding(4.dp),
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    listOf("Student", "Admin").forEach { role ->
+                        val isSelected = selectedRole.lowercase() == role.lowercase()
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (isSelected) DarkGreen else Color.Transparent)
+                                .clickable { selectedRole = role.lowercase() }
+                                .padding(vertical = 10.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = role,
+                                fontSize = 14.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
                 }
 
                 // ── Login Button ──────────────────────────────────────────────────
@@ -288,6 +326,19 @@ fun LoginScreen(navController: NavController) {
                                         try {
                                             val data = org.json.JSONObject(responseBody).optJSONObject("data")
                                             data?.let { d ->
+                                                val userRole = d.optString("role", "").lowercase()
+                                                
+                                                // VALIDATE ROLE
+                                                if (userRole != selectedRole) {
+                                                    errorMessage = if (selectedRole == "admin") {
+                                                        "Access Denied: This account is not an Administrator."
+                                                    } else {
+                                                        "Access Denied: Please use the Admin login for Administrator accounts."
+                                                    }
+                                                    isLoading = false
+                                                    return@launch
+                                                }
+
                                                 editor.putInt("user_id", d.optInt("user_id", 0))
                                                 editor.putString("user_email", d.optString("email", ""))
                                                 editor.putString("user_first_name", d.optString("first_name", ""))
