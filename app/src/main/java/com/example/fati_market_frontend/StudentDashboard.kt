@@ -435,8 +435,9 @@ private fun StudentHomeContent(
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
 
-        // ── Content ───────────────────────────────────────────────────────────
-        when {
+        // ── Content (scrollable) ───────────────────────────────────────────────
+        Box(modifier = Modifier.fillMaxSize()) {
+            when {
             isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(color = DarkGreen)
             }
@@ -550,6 +551,7 @@ private fun StudentHomeContent(
                     }
                 }
             }
+            }
         }
     }
 }
@@ -571,27 +573,42 @@ private fun MarketplaceHeader(
 
     var walletPoints by remember { mutableStateOf(0) }
     var isPointsVisible by remember { mutableStateOf(prefs.getBoolean("points_visibility", false)) }
+    val scope = rememberCoroutineScope()
 
     // Fetch wallet points from API
-    LaunchedEffect(Unit) {
-        try {
-            val request = okhttp3.Request.Builder()
-                .url("https://fati-api.alertaraqc.com/api/wallet")
-                .header("Authorization", "Bearer $token")
-                .header("Accept", "application/json")
-                .get()
-                .build()
-            val httpClient = okhttp3.OkHttpClient()
-            httpClient.newCall(request).execute().use { response ->
-                if (response.isSuccessful) {
-                    val body = response.body?.string() ?: ""
-                    val json = org.json.JSONObject(body)
-                    val dataObj = json.optJSONObject("data")
-                    walletPoints = dataObj?.optInt("wallet_points", 0) ?: 0
+    LaunchedEffect(token) {
+        if (token.isNotBlank()) {
+            scope.launch {
+                try {
+                    val points = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        val request = okhttp3.Request.Builder()
+                            .url("https://fati-api.alertaraqc.com/api/wallet")
+                            .header("Authorization", "Bearer $token")
+                            .header("Accept", "application/json")
+                            .get()
+                            .build()
+                        val httpClient = okhttp3.OkHttpClient.Builder()
+                            .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                            .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                            .writeTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                            .build()
+                        httpClient.newCall(request).execute().use { response ->
+                            if (response.isSuccessful) {
+                                val body = response.body?.string() ?: ""
+                                val json = org.json.JSONObject(body)
+                                val dataObj = json.optJSONObject("data")
+                                dataObj?.optInt("wallet_points", 0) ?: 0
+                            } else {
+                                0
+                            }
+                        }
+                    }
+                    walletPoints = points
+                } catch (e: Exception) {
+                    android.util.Log.e("WalletAPI", "Error fetching wallet: ${e.message}")
+                    walletPoints = 0
                 }
             }
-        } catch (e: Exception) {
-            // Keep default value
         }
     }
 
@@ -750,44 +767,46 @@ private fun StudentMyListingsContent(
     Column(modifier = Modifier.fillMaxSize()) {
         AdminPageHeader(title = "My Listings", onMenuClick = onMenuClick, favoritesCount = favoritesCount, onFavoritesClick = onFavoritesClick)
 
-        when {
-            isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = DarkGreen)
-            }
-            errorMessage != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                    modifier            = Modifier.padding(horizontal = 24.dp)
-                ) {
-                    Icon(Icons.Filled.ErrorOutline, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(48.dp))
-                    Text(errorMessage ?: "", color = MaterialTheme.colorScheme.error)
-                    Button(onClick = { loadItems() }, colors = ButtonDefaults.buttonColors(containerColor = DarkGreen)) {
-                        Text("Retry", color = Color.White)
+        Box(modifier = Modifier.fillMaxSize()) {
+            when {
+                isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = DarkGreen)
+                }
+                errorMessage != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier            = Modifier.padding(horizontal = 24.dp)
+                    ) {
+                        Icon(Icons.Filled.ErrorOutline, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(48.dp))
+                        Text(errorMessage ?: "", color = MaterialTheme.colorScheme.error)
+                        Button(onClick = { loadItems() }, colors = ButtonDefaults.buttonColors(containerColor = DarkGreen)) {
+                            Text("Retry", color = Color.White)
+                        }
                     }
                 }
-            }
-            itemList.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Icon(Icons.Filled.Inventory2, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(64.dp))
-                    Text("You have no listings yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                itemList.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Icon(Icons.Filled.Inventory2, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(64.dp))
+                        Text("You have no listings yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
-            }
-            else -> LazyColumn(
-                modifier            = Modifier.fillMaxSize(),
-                contentPadding      = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                items(itemList) { item ->
-                    PrivateItemCard(
-                        item       = item,
-                        token      = token,
-                        onEdit     = { editingItem = item },
-                        onDelete   = { itemList = itemList.filter { it.itemId != item.itemId } },
-                        onGoToChat = onGoToChat
-                    )
+                else -> LazyColumn(
+                    modifier            = Modifier.fillMaxSize(),
+                    contentPadding      = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    items(itemList) { item ->
+                        PrivateItemCard(
+                            item       = item,
+                            token      = token,
+                            onEdit     = { editingItem = item },
+                            onDelete   = { itemList = itemList.filter { it.itemId != item.itemId } },
+                            onGoToChat = onGoToChat
+                        )
+                    }
+                    item { Spacer(Modifier.height(8.dp)) }
                 }
-                item { Spacer(Modifier.height(8.dp)) }
             }
         }
     }
@@ -2326,7 +2345,8 @@ private fun StudentAddItemContent(
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp, vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
 
             // ── Title ──────────────────────────────────────────────────────────
