@@ -2,6 +2,7 @@ package com.example.fati_market_frontend
 
 import android.content.Context
 import android.net.Uri
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
@@ -464,7 +465,6 @@ fun AdminDashboard(isDarkMode: Boolean, onThemeToggle: () -> Unit, onLogout: () 
                         }
                         userWalletPoints = points
                     } catch (e: Exception) {
-                        android.util.Log.e("WalletAPI", "Error fetching wallet: ${e.message}")
                     }
                 }
                 delay(5000) // Poll every 5 seconds
@@ -472,6 +472,15 @@ fun AdminDashboard(isDarkMode: Boolean, onThemeToggle: () -> Unit, onLogout: () 
         }
     }
 
+    // Handle back button - redirect to dashboard when drawer or chat is open
+    BackHandler(enabled = drawerPage != null || (selectedTab == AdminTab.CHAT && chatConversation != null)) {
+        if (drawerPage != null) {
+            drawerPage = null
+            selectedTab = AdminTab.HOME
+        } else if (selectedTab == AdminTab.CHAT && chatConversation != null) {
+            chatConversation = null
+        }
+    }
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -507,7 +516,7 @@ fun AdminDashboard(isDarkMode: Boolean, onThemeToggle: () -> Unit, onLogout: () 
         val chatIsOpen = selectedTab == AdminTab.CHAT && chatConversation != null
         Scaffold(
             bottomBar = {
-                if (!chatIsOpen && showBottomBar.value) {
+                if (!chatIsOpen && drawerPage == null && showBottomBar.value) {
                     AdminBottomBar(
                         selected       = selectedTab,
                         userProfilePic = userProfilePic,
@@ -526,7 +535,7 @@ fun AdminDashboard(isDarkMode: Boolean, onThemeToggle: () -> Unit, onLogout: () 
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(bottom = if (chatIsOpen || !showBottomBar.value) 0.dp else innerPadding.calculateBottomPadding())
+                    .padding(bottom = if (chatIsOpen || drawerPage != null || !showBottomBar.value) 0.dp else innerPadding.calculateBottomPadding())
             ) {
                 if (drawerPage != null) {
                     DrawerPageContent(
@@ -2339,7 +2348,6 @@ private fun AdminHomeContent(onMenuClick: () -> Unit) {
                         }
                     }
                 } catch (e: Exception) {
-                    android.util.Log.e("Dashboard", "Error fetching dashboard: ${e.message}")
                 } finally {
                     isLoading = false
                 }
@@ -2489,6 +2497,7 @@ data class ChatItem(
     val description: String,
     val pricePoints: Int,
     val markupPoints: Int,
+    val sellerId: Int,
     val sellerEmail: String,
     val status: String,
     val photos: List<String>
@@ -2506,7 +2515,8 @@ data class Conversation(
     val latestMessage: String,
     val lastMessageAt: String,
     val messageCount: Int,
-    val unreadCount: Int = 0
+    val unreadCount: Int = 0,
+    val lastMessageSenderId: Int = 0
 )
 
 data class ChatMessage(
@@ -2557,6 +2567,7 @@ private fun fetchConversations(token: String): List<Conversation> {
                     ?: obj.optInt("user_id", 0)
                 val itemId = obj.optInt("item_id").takeIf { it != 0 }
                     ?: obj.optInt("item", 0)
+                Log.d("FetchConversations", "Conv $i: userId=$userId, itemId=$itemId")
                 list.add(Conversation(
                     otherUserId      = userId,
                     otherUserEmail   = obj.optString("other_user_email").ifBlank { obj.optString("email") },
@@ -2569,7 +2580,9 @@ private fun fetchConversations(token: String): List<Conversation> {
                     latestMessage    = obj.optString("latest_message").ifBlank { obj.optString("last_message") },
                     lastMessageAt    = obj.optString("last_message_at").ifBlank { obj.optString("updated_at") },
                     messageCount     = obj.optInt("message_count"),
-                    unreadCount      = obj.optInt("unread_count", 0)
+                    unreadCount      = obj.optInt("unread_count", 0),
+                    lastMessageSenderId = obj.optInt("last_message_sender_id").takeIf { it != 0 }
+                                        ?: obj.optInt("sender_id", 0)
                 ))
             }
             // Keep each unique user+item pair as its own conversation
@@ -2586,6 +2599,7 @@ private fun fetchConversations(token: String): List<Conversation> {
 private fun fetchMessages(token: String, itemId: Int, otherUserId: Int = 0): List<ChatMessage> {
     val base = "https://fati-api.alertaraqc.com/api/messages/$itemId"
     val url  = if (otherUserId != 0) "$base?other_user_id=$otherUserId" else base
+    Log.d("FetchMessages", "URL: $url, itemId: $itemId, otherUserId: $otherUserId")
     val request = Request.Builder()
         .url(url)
         .header("Authorization", "Bearer $token")
@@ -2842,7 +2856,8 @@ fun AdminChatContent(
     selectedConversation: Conversation?,
     onSelectConversation: (Conversation?) -> Unit,
     favoritesCount: Int = 0,
-    onFavoritesClick: () -> Unit = {}
+    onFavoritesClick: () -> Unit = {},
+    isAdmin: Boolean = true
 ) {
     val context = LocalContext.current
     val prefs   = remember { context.getSharedPreferences("fatimarket_prefs", Context.MODE_PRIVATE) }
@@ -2921,7 +2936,8 @@ fun AdminChatContent(
                 conversation  = conv,
                 token         = token,
                 currentUserId = currentUserId,
-                onBack        = { onSelectConversation(null) }
+                onBack        = { onSelectConversation(null) },
+                isAdmin       = isAdmin
             )
         } else {
             Column(modifier = Modifier.fillMaxSize()) {
@@ -3110,7 +3126,7 @@ fun AdminChatContent(
                     }
                     else -> LazyColumn(modifier = Modifier.fillMaxSize()) {
                         items(filteredConversations, key = { "${it.otherUserId}_${it.itemId}" }) { conv ->
-                            ConversationItem(conv) { onSelectConversation(conv) }
+                            ConversationItem(conv, { onSelectConversation(conv) }, isAdmin = isAdmin, currentUserId = currentUserId)
                         }
                     }
                 }
@@ -3120,7 +3136,7 @@ fun AdminChatContent(
 }
 
 @Composable
-private fun ConversationItem(conversation: Conversation, onClick: () -> Unit) {
+private fun ConversationItem(conversation: Conversation, onClick: () -> Unit, isAdmin: Boolean = true, currentUserId: Int = 0) {
     val hasUnread = conversation.unreadCount > 0
     Row(
         modifier = Modifier
@@ -3169,8 +3185,10 @@ private fun ConversationItem(conversation: Conversation, onClick: () -> Unit) {
             // Row 1: item title + time
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
+                // Item title
                 Text(
                     conversation.itemTitle,
                     fontSize = 15.sp,
@@ -3180,7 +3198,8 @@ private fun ConversationItem(conversation: Conversation, onClick: () -> Unit) {
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
                 )
-                Spacer(Modifier.width(6.dp))
+
+                // Time
                 Text(
                     timeAgo(conversation.lastMessageAt),
                     fontSize = 11.sp,
@@ -3189,42 +3208,77 @@ private fun ConversationItem(conversation: Conversation, onClick: () -> Unit) {
                             else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
                 )
             }
-            Spacer(Modifier.height(1.dp))
-            // Row 2: sender name
-            Text(
-                "${conversation.firstName} ${conversation.lastName}",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Normal,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(bottom = 2.dp)
-            )
-            // Status chip (private = negotiating, public = available)
-            if (conversation.itemStatus.isNotBlank()) {
-                val isPrivate = conversation.itemStatus.lowercase() == "pending"
-                Surface(
-                    shape    = RoundedCornerShape(4.dp),
-                    color    = if (isPrivate) Color(0xFFFF8F00).copy(alpha = 0.12f)
-                               else DarkGreen.copy(alpha = 0.10f),
-                    modifier = Modifier.padding(bottom = 3.dp)
-                ) {
-                    Text(
-                        if (isPrivate) "Negotiating" else conversation.itemStatus.replaceFirstChar { it.uppercaseChar() },
-                        fontSize   = 9.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color      = if (isPrivate) Color(0xFFE65100) else DarkGreen,
-                        modifier   = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                    )
+            Spacer(Modifier.height(4.dp))
+            // Row 2: sender name + unread badge + status badge (only on admin)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(
+                    "${conversation.firstName} ${conversation.lastName}",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Normal,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+
+                // Unread count badge
+                if (hasUnread) {
+                    Box(
+                        modifier = Modifier
+                            .size(22.dp)
+                            .background(Color(0xFFE53935), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            if (conversation.unreadCount > 99) "99+" else "${conversation.unreadCount}",
+                            fontSize = 9.sp,
+                            lineHeight = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+
+                // Status + Category badge (only show in admin view)
+                if (isAdmin) {
+                    val statusText = conversation.itemStatus.ifBlank { "Unknown" }
+                    val statusLower = statusText.lowercase()
+                    val isBuyer = statusLower == "public" || statusLower == "reserved" || statusLower == "sold"
+                    val categoryLabel = if (isBuyer) "Student Buyer" else "Student Seller"
+                    val statusDisplay = statusText.replaceFirstChar { it.uppercaseChar() }
+                    val badgeText = "$statusDisplay - $categoryLabel"
+                    val badgeColor = if (isBuyer) Color(0xFF2196F3) else Color(0xFF4CAF50) // Blue for Buyer, Green for Seller
+
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = badgeColor.copy(alpha = 0.12f)
+                    ) {
+                        Text(
+                            badgeText,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = badgeColor,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
                 }
             }
-            // Row 3: latest message + unread badge
+            // Row 3: latest message
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                val displayMessage = if (currentUserId == conversation.lastMessageSenderId)
+                    "You: ${conversation.latestMessage}"
+                else
+                    conversation.latestMessage
                 Text(
-                    conversation.latestMessage,
+                    displayMessage,
                     fontSize = 13.sp,
                     fontWeight = if (hasUnread) FontWeight.SemiBold else FontWeight.Normal,
                     color = if (hasUnread) MaterialTheme.colorScheme.onSurface
@@ -3233,23 +3287,6 @@ private fun ConversationItem(conversation: Conversation, onClick: () -> Unit) {
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
                 )
-                if (hasUnread) {
-                    Spacer(Modifier.width(8.dp))
-                    Box(
-                        modifier = Modifier
-                            .defaultMinSize(minWidth = 20.dp, minHeight = 20.dp)
-                            .background(Color(0xFFE53935), CircleShape)
-                            .padding(horizontal = 5.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            if (conversation.unreadCount > 99) "99+" else "${conversation.unreadCount}",
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
-                        )
-                    }
-                }
             }
         }
     }
@@ -3264,7 +3301,8 @@ private fun ChatDetailContent(
     conversation: Conversation,
     token: String,
     currentUserId: Int,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    isAdmin: Boolean = true
 ) {
     var messages               by remember { mutableStateOf<List<ChatMessage>>(emptyList()) }
     var isLoading              by remember { mutableStateOf(true) }
@@ -3278,6 +3316,10 @@ private fun ChatDetailContent(
     var chatItem               by remember { mutableStateOf<ChatItem?>(null) }
     var showItemPreview        by remember { mutableStateOf(false) }
     var showEditItem           by remember { mutableStateOf(false) }
+    var showConfirmDialog      by remember { mutableStateOf<String?>(null) } // "sold" or "reserved"
+    var isProcessing           by remember { mutableStateOf(false) }
+    var confirmMessage         by remember { mutableStateOf("") }
+    var selectedPaymentMethod  by remember { mutableStateOf("points") }
     // val pusherStatus   by pusherGlobalStatus
     // val pusherDebugLog by pusherGlobalLog
     val listState              = rememberLazyListState()
@@ -3449,9 +3491,11 @@ private fun ChatDetailContent(
             fetchError = false
             fetchErrorMsg = ""
             try {
+                Log.d("ChatDetail", "Fetching messages for itemId=${conversation.itemId}, otherUserId=${conversation.otherUserId}")
                 val fetched = withContext(Dispatchers.IO) {
                     fetchMessages(token, conversation.itemId, conversation.otherUserId)
                 }
+                Log.d("ChatDetail", "Fetched ${fetched.size} messages")
                 messages = fetched.distinctBy { it.messageId }
             } catch (e: Exception) {
                 fetchError = true
@@ -3508,6 +3552,49 @@ private fun ChatDetailContent(
                 sendMessage(token, conversation.itemId, receiverId, text)
             }
             isSending = false
+        }
+    }
+
+    // Mark item as sold or reserved
+    fun markItemAction(action: String) {
+        isProcessing = true
+        val endpoint = if (action == "sold")
+            "https://fati-api.alertaraqc.com/api/admin/mark-as-sold"
+        else
+            "https://fati-api.alertaraqc.com/api/admin/mark-as-reserved"
+
+        scope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    val requestBody = JSONObject()
+                    requestBody.put("item_id", conversation.itemId)
+                    requestBody.put("buyer_id", conversation.otherUserId)
+                    if (action == "sold") {
+                        requestBody.put("payment_method", selectedPaymentMethod)
+                    }
+
+                    val request = Request.Builder()
+                        .url(endpoint)
+                        .header("Authorization", "Bearer $token")
+                        .header("Accept", "application/json")
+                        .header("Content-Type", "application/json")
+                        .post(requestBody.toString().toRequestBody("application/json".toMediaType()))
+                        .build()
+
+                    adminHttpClient.newCall(request).execute().use { response ->
+                        if (response.isSuccessful) {
+                            confirmMessage = if (action == "sold") "Item marked as sold successfully!" else "Item marked as reserved successfully!"
+                        } else {
+                            confirmMessage = "Failed to ${action} item. Please try again."
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                confirmMessage = "Error: ${e.message ?: "Unknown error"}"
+            } finally {
+                isProcessing = false
+                showConfirmDialog = null
+            }
         }
     }
 
@@ -3663,6 +3750,8 @@ private fun ChatDetailContent(
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 // Points
+                                val pointsToShow = if (item.status.lowercase() in listOf("public", "reserved", "sold", "acquired"))
+                                    item.markupPoints else item.pricePoints
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(3.dp)
@@ -3671,7 +3760,7 @@ private fun ChatDetailContent(
                                         tint = Color.White.copy(alpha = 0.85f),
                                         modifier = Modifier.size(11.dp))
                                     Text(
-                                        "${item.pricePoints} pts",
+                                        "$pointsToShow pts",
                                         fontSize = 11.sp,
                                         color = Color.White.copy(alpha = 0.85f),
                                         fontWeight = FontWeight.Medium
@@ -3699,10 +3788,12 @@ private fun ChatDetailContent(
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            // Edit Item button (visible only if status is private, acquired, or public)
-                            val canEditItem = item.status.lowercase() == "private" ||
-                                             item.status.lowercase() == "acquired" ||
-                                             item.status.lowercase() == "public"
+                            // Edit Item button (visible only if user is seller and status is private, acquired, or public)
+                            val canEditItem = currentUserId == item.sellerId && (
+                                item.status.lowercase() == "private" ||
+                                item.status.lowercase() == "acquired" ||
+                                item.status.lowercase() == "public"
+                            )
                             if (canEditItem) {
                                 OutlinedButton(
                                     onClick = { showEditItem = true },
@@ -3840,6 +3931,55 @@ private fun ChatDetailContent(
                     HorizontalDivider(
                         color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
                     )
+
+                    // ── Action buttons (Mark as Reserve, Mark as Sold) ──────────
+                    // Only show for seller when item status is public, reserved, or sold
+                    val currentChatItem = chatItem
+                    if (currentChatItem != null && currentUserId == currentChatItem.sellerId &&
+                        currentChatItem.status.lowercase() in listOf("public", "reserved", "sold")) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = { showConfirmDialog = "reserved" },
+                                enabled = !isProcessing,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(36.dp),
+                                border = BorderStroke(1.dp, DarkGreen),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text(
+                                    "Mark as Reserve",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = DarkGreen
+                                )
+                            }
+
+                            OutlinedButton(
+                                onClick = { showConfirmDialog = "sold" },
+                                enabled = !isProcessing,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(36.dp),
+                                border = BorderStroke(1.dp, DarkGreen),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text(
+                                    "Mark as Sold",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = DarkGreen
+                                )
+                            }
+                        }
+                    }
+
+                    // ─────────────────────────────────────────────────────────
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -3951,6 +4091,95 @@ private fun ChatDetailContent(
                 } // end else (chat view)
         } // end when (AnimatedContent state)
     } // end AnimatedContent
+
+    // Confirmation dialog for mark as sold/reserved
+    if (showConfirmDialog != null) {
+        AlertDialog(
+            onDismissRequest = { if (!isProcessing) showConfirmDialog = null },
+            title = {
+                Text(if (showConfirmDialog == "sold") "Mark as Sold?" else "Mark as Reserved?")
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        if (showConfirmDialog == "sold")
+                            "Are you sure you want to mark this item as sold?"
+                        else
+                            "Are you sure you want to mark this item as reserved?"
+                    )
+
+                    if (showConfirmDialog == "sold") {
+                        var expanded by remember { mutableStateOf(false) }
+                        val paymentOptions = listOf("points", "cash", "trade")
+
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Text("Payment Method:", fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                            Spacer(Modifier.height(6.dp))
+                            Box(modifier = Modifier.fillMaxWidth()) {
+                                OutlinedButton(
+                                    onClick = { expanded = !expanded },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(selectedPaymentMethod.replaceFirstChar { it.uppercase() })
+                                }
+                                DropdownMenu(
+                                    expanded = expanded,
+                                    onDismissRequest = { expanded = false },
+                                    modifier = Modifier.fillMaxWidth(0.9f)
+                                ) {
+                                    paymentOptions.forEach { option ->
+                                        DropdownMenuItem(
+                                            text = { Text(option.replaceFirstChar { it.uppercase() }) },
+                                            onClick = {
+                                                selectedPaymentMethod = option
+                                                expanded = false
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        markItemAction(showConfirmDialog!!)
+                    },
+                    enabled = !isProcessing,
+                    colors = ButtonDefaults.buttonColors(containerColor = DarkGreen)
+                ) {
+                    Text(if (isProcessing) "Processing..." else "Confirm", color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showConfirmDialog = null },
+                    enabled = !isProcessing
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    // Success/Error message dialog
+    if (confirmMessage.isNotEmpty()) {
+        AlertDialog(
+            onDismissRequest = { confirmMessage = "" },
+            title = { Text("Status Update") },
+            text = { Text(confirmMessage) },
+            confirmButton = {
+                Button(
+                    onClick = { confirmMessage = "" },
+                    colors = ButtonDefaults.buttonColors(containerColor = DarkGreen)
+                ) {
+                    Text("OK", color = Color.White)
+                }
+            }
+        )
+    }
 }
 
 @Composable
@@ -4983,6 +5212,7 @@ private fun EditItemPageForList(
                                         description = item.description,
                                         pricePoints = item.pricePoints,
                                         markupPoints = markupPts ?: item.markupPoints,
+                                        sellerId = item.sellerId,
                                         sellerEmail = item.sellerEmail,
                                         status = editStatus,
                                         photos = item.photos
@@ -6146,7 +6376,6 @@ fun AdminPageHeader(
                         }
                         walletPoints = points
                     } catch (e: Exception) {
-                        android.util.Log.e("WalletAPI", "Error fetching wallet: ${e.message}")
                     }
                 }
                 delay(5000) // Poll every 5 seconds
@@ -6255,6 +6484,7 @@ private fun fetchChatItem(token: String, itemId: Int): ChatItem? {
                 description  = obj.optString("description"),
                 pricePoints  = obj.optInt("price_points").takeIf { it != 0 } ?: obj.optInt("points").takeIf { it != 0 } ?: obj.optInt("price_points"),
                 markupPoints = obj.optInt("markup_points"),
+                sellerId     = obj.optInt("seller_id"),
                 sellerEmail  = obj.optString("seller_email"),
                 status       = obj.optString("status"),
                 photos       = photos
@@ -6263,6 +6493,21 @@ private fun fetchChatItem(token: String, itemId: Int): ChatItem? {
     } catch (_: Exception) { null }
 }
 
+fun performLogout(token: String): Boolean {
+    return try {
+        val request = Request.Builder()
+            .url("https://fati-api.alertaraqc.com/api/logout")
+            .header("Authorization", "Bearer $token")
+            .header("Accept", "application/json")
+            .header("Content-Type", "application/json")
+            .post("{}".toRequestBody("application/json".toMediaType()))
+            .build()
+
+        adminHttpClient.newCall(request).execute().use { response ->
+            response.isSuccessful
+        }
+    } catch (_: Exception) { false }
+}
 
 // Get all information of items base on status (admin endpoint — returns all users' items)
 private fun fetchItems(token: String, status: String): List<Item> {
@@ -6410,8 +6655,6 @@ private fun PointsTransactionContent(
                     continue
                 }
 
-                android.util.Log.d("PointsAPI", "Token: ${token.take(10)}...")
-                android.util.Log.d("PointsAPI", "Endpoint: $endpoint")
 
                 val responseData = withContext(Dispatchers.IO) {
                     val request = Request.Builder()
@@ -6422,12 +6665,10 @@ private fun PointsTransactionContent(
                         .build()
 
                     adminHttpClient.newCall(request).execute().use { response ->
-                        android.util.Log.d("PointsAPI", "Response code: ${response.code}")
                         if (response.isSuccessful) {
                             response.body?.string() ?: "{\"data\": []}"
                         } else {
                             val errorBody = response.body?.string() ?: ""
-                            android.util.Log.e("PointsAPI", "HTTP Error ${response.code}: ${response.message ?: "Unknown error"} | Body: $errorBody")
                             null
                         }
                     }
@@ -6435,7 +6676,6 @@ private fun PointsTransactionContent(
 
                 if (responseData != null) {
                     try {
-                        android.util.Log.d("PointsAPI", "Response body: $responseData")
                         val json = JSONObject(responseData)
                         val dataArray = json.optJSONArray("data") ?: JSONArray()
                         val data = mutableListOf<Map<String, Any>>()
@@ -6456,7 +6696,6 @@ private fun PointsTransactionContent(
                         errorMessage = ""
                     } catch (parseError: Exception) {
                         errorMessage = "Failed to parse response: ${parseError.message}"
-                        android.util.Log.e("PointsAPI", "Parse error for body: $responseData", parseError)
                     }
                 } else {
                     errorMessage = "Failed to fetch data"
@@ -6468,7 +6707,6 @@ private fun PointsTransactionContent(
                 }
             } catch (e: Exception) {
                 errorMessage = "Network error: ${e.javaClass.simpleName} - ${e.message ?: "Unknown error loading transactions"}"
-                android.util.Log.e("PointsAPI", "Network Exception: ${e.javaClass.simpleName}", e)
                 if (isInitialLoad) {
                     isLoading = false
                     isInitialLoad = false
@@ -6542,12 +6780,12 @@ private fun PointsTransactionContent(
                                 Text(
                                     "${if (pointsChange > 0) "+" else ""}${pointsChange} pts • $reason",
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = if (pointsChange > 0) Color.Green else Color.Red
+                                    color = if (pointsChange > 0) DarkGreen else MaterialTheme.colorScheme.error
                                 )
                                 if (itemTitle.isNotEmpty()) {
-                                    Text(itemTitle, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                                    Text(itemTitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
-                                Text(createdAt, style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                                Text(createdAt, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                     }
@@ -6589,8 +6827,6 @@ private fun TransactionsContent(
                     continue
                 }
 
-                android.util.Log.d("TransactionsAPI", "Token: ${token.take(10)}...")
-                android.util.Log.d("TransactionsAPI", "Endpoint: $endpoint")
 
                 val responseData = withContext(Dispatchers.IO) {
                     val request = Request.Builder()
@@ -6601,12 +6837,10 @@ private fun TransactionsContent(
                         .build()
 
                     adminHttpClient.newCall(request).execute().use { response ->
-                        android.util.Log.d("TransactionsAPI", "Response code: ${response.code}")
                         if (response.isSuccessful) {
                             response.body?.string() ?: "{\"data\": []}"
                         } else {
                             val errorBody = response.body?.string() ?: ""
-                            android.util.Log.e("TransactionsAPI", "HTTP Error ${response.code}: ${response.message ?: "Unknown error"} | Body: $errorBody")
                             null
                         }
                     }
@@ -6614,7 +6848,6 @@ private fun TransactionsContent(
 
                 if (responseData != null) {
                     try {
-                        android.util.Log.d("TransactionsAPI", "Response body: $responseData")
                         val json = JSONObject(responseData)
                         val dataArray = json.optJSONArray("data") ?: JSONArray()
                         val data = mutableListOf<Map<String, Any>>()
@@ -6637,7 +6870,6 @@ private fun TransactionsContent(
                         errorMessage = ""
                     } catch (parseError: Exception) {
                         errorMessage = "Failed to parse response: ${parseError.message}"
-                        android.util.Log.e("TransactionsAPI", "Parse error for body: $responseData", parseError)
                     }
                 } else {
                     errorMessage = "Failed to fetch data"
@@ -6649,7 +6881,6 @@ private fun TransactionsContent(
                 }
             } catch (e: Exception) {
                 errorMessage = "Network error: ${e.javaClass.simpleName} - ${e.message ?: "Unknown error loading transactions"}"
-                android.util.Log.e("TransactionsAPI", "Network Exception: ${e.javaClass.simpleName}", e)
                 if (isInitialLoad) {
                     isLoading = false
                     isInitialLoad = false
@@ -6715,17 +6946,17 @@ private fun TransactionsContent(
                         val pointsUsed = (transaction["points_used"] as? Int ?: 0)
 
                         val methodColor = when (paymentMethod.lowercase()) {
-                            "cash" -> Color.Gray
+                            "cash" -> MaterialTheme.colorScheme.outline
                             "trade" -> Color(0xFFFF9800)
-                            "points" -> Color.Green
-                            else -> Color.Gray
+                            "points" -> DarkGreen
+                            else -> MaterialTheme.colorScheme.outline
                         }
 
                         val statusColor = when (status.lowercase()) {
-                            "completed" -> Color.Green
+                            "completed" -> DarkGreen
                             "pending" -> Color(0xFFFFC107)
-                            "failed" -> Color.Red
-                            else -> Color.Gray
+                            "failed" -> MaterialTheme.colorScheme.error
+                            else -> MaterialTheme.colorScheme.outline
                         }
 
                         Card(
@@ -6775,7 +7006,7 @@ private fun TransactionsContent(
                                         "$pointsUsed pts used",
                                         style = MaterialTheme.typography.bodySmall,
                                         fontWeight = FontWeight.Bold,
-                                        color = Color.Green
+                                        color = DarkGreen
                                     )
                                 }
                             }
@@ -6817,44 +7048,49 @@ private fun ProfitSummaryContent(
                     continue
                 }
 
-                android.util.Log.d("ProfitSummaryAPI", "Token: ${token.take(10)}...")
 
-                val request = Request.Builder()
-                    .url("https://fati-api.alertaraqc.com/api/admin/transactions/profit-summary")
-                    .header("Authorization", "Bearer $token")
-                    .header("Accept", "application/json")
-                    .get()
-                    .build()
+                val responseData = withContext(Dispatchers.IO) {
+                    val request = Request.Builder()
+                        .url("https://fati-api.alertaraqc.com/api/admin/transactions/profit-summary")
+                        .header("Authorization", "Bearer $token")
+                        .header("Accept", "application/json")
+                        .get()
+                        .build()
 
-                adminHttpClient.newCall(request).execute().use { response ->
-                    android.util.Log.d("ProfitSummaryAPI", "Response code: ${response.code}")
+                    adminHttpClient.newCall(request).execute().use { response ->
+                        if (response.isSuccessful) {
+                            response.body?.string() ?: "{\"data\": {}}"
+                        } else {
+                            val errorBody = response.body?.string() ?: ""
+                            null
+                        }
+                    }
+                }
 
-                    if (response.isSuccessful) {
-                        val bodyString = response.body?.string() ?: "{\"data\": {}}"
-                        android.util.Log.d("ProfitSummaryAPI", "Response body: $bodyString")
-
-                        val json = JSONObject(bodyString)
-                        val data = json.optJSONObject("data") ?: JSONObject()
+                if (responseData != null) {
+                    try {
+                        val json = JSONObject(responseData)
+                        val dataObj = json.optJSONObject("data") ?: JSONObject()
                         profitData = mapOf(
-                            "total_profit_points" to data.optInt("total_profit_points", 0),
-                            "monthly_profit_points" to data.optInt("monthly_profit_points", 0),
-                            "completed_transactions" to data.optInt("completed_transactions", 0),
-                            "average_profit_per_transaction" to data.optDouble("average_profit_per_transaction", 0.0)
+                            "total_profit_points" to dataObj.optInt("total_profit_points", 0),
+                            "monthly_profit_points" to dataObj.optInt("monthly_profit_points", 0),
+                            "completed_transactions" to dataObj.optInt("completed_transactions", 0),
+                            "average_profit_per_transaction" to dataObj.optDouble("average_profit_per_transaction", 0.0)
                         )
                         errorMessage = ""
-                    } else {
-                        val errorBody = response.body?.string() ?: ""
-                        errorMessage = "HTTP ${response.code}: ${response.message ?: "Unknown error"}"
-                        android.util.Log.e("ProfitSummaryAPI", "Error: $errorMessage | Body: $errorBody")
+                    } catch (parseError: Exception) {
+                        errorMessage = "Failed to parse response: ${parseError.message}"
                     }
-                    if (isInitialLoad) {
-                        isLoading = false
-                        isInitialLoad = false
-                    }
+                } else {
+                    errorMessage = "Failed to fetch data"
+                }
+
+                if (isInitialLoad) {
+                    isLoading = false
+                    isInitialLoad = false
                 }
             } catch (e: Exception) {
                 errorMessage = "Error: ${e.message ?: "Unknown error loading profit data"}"
-                android.util.Log.e("ProfitSummaryAPI", "Exception", e)
                 if (isInitialLoad) {
                     isLoading = false
                     isInitialLoad = false
@@ -6905,33 +7141,74 @@ private fun ProfitSummaryContent(
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
-                else -> LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                else -> Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    item {
-                        LazyVerticalGrid(columns = GridCells.Fixed(2), modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            items(listOf(
-                                Pair("Total Profit", "${profitData["total_profit_points"] ?: 0} pts"),
-                                Pair("Monthly Profit", "${profitData["monthly_profit_points"] ?: 0} pts"),
-                                Pair("Completed Txns", (profitData["completed_transactions"] ?: 0).toString()),
-                                Pair("Avg Per Txn", String.format("%.2f", profitData["average_profit_per_transaction"] ?: 0.0))
-                            )) { (label, value) ->
-                                Card(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = RoundedCornerShape(8.dp),
-                                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-                                ) {
-                                    Column(modifier = Modifier.fillMaxWidth().padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                                        Text(label, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                                        Text(value, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.headlineSmall)
-                                    }
-                                }
+                    val items = listOf(
+                        Pair("Total Profit", "${profitData["total_profit_points"] ?: 0} pts"),
+                        Pair("Monthly Profit", "${profitData["monthly_profit_points"] ?: 0} pts"),
+                        Pair("Completed Txns", (profitData["completed_transactions"] ?: 0).toString()),
+                        Pair("Avg Per Txn", String.format("%.2f", profitData["average_profit_per_transaction"] ?: 0.0))
+                    )
+
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Card(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxWidth(),
+                            shape = RoundedCornerShape(8.dp),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                        ) {
+                            Column(modifier = Modifier.fillMaxWidth().padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(items[0].first, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(items[0].second, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.headlineSmall)
+                            }
+                        }
+                        Card(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxWidth(),
+                            shape = RoundedCornerShape(8.dp),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                        ) {
+                            Column(modifier = Modifier.fillMaxWidth().padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(items[1].first, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(items[1].second, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.headlineSmall)
                             }
                         }
                     }
-                    item { Spacer(Modifier.height(8.dp)) }
+
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Card(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxWidth(),
+                            shape = RoundedCornerShape(8.dp),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                        ) {
+                            Column(modifier = Modifier.fillMaxWidth().padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(items[2].first, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(items[2].second, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.headlineSmall)
+                            }
+                        }
+                        Card(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxWidth(),
+                            shape = RoundedCornerShape(8.dp),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                        ) {
+                            Column(modifier = Modifier.fillMaxWidth().padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(items[3].first, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(items[3].second, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.headlineSmall)
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
                 }
             }
         }
@@ -6967,23 +7244,28 @@ private fun SalesReportContent(
                     continue
                 }
 
-                android.util.Log.d("SalesReportAPI", "Token: ${token.take(10)}...")
 
-                val request = Request.Builder()
-                    .url("https://fati-api.alertaraqc.com/api/admin/reports/sales")
-                    .header("Authorization", "Bearer $token")
-                    .header("Accept", "application/json")
-                    .get()
-                    .build()
+                val responseData = withContext(Dispatchers.IO) {
+                    val request = Request.Builder()
+                        .url("https://fati-api.alertaraqc.com/api/admin/reports/sales")
+                        .header("Authorization", "Bearer $token")
+                        .header("Accept", "application/json")
+                        .get()
+                        .build()
 
-                adminHttpClient.newCall(request).execute().use { response ->
-                    android.util.Log.d("SalesReportAPI", "Response code: ${response.code}")
+                    adminHttpClient.newCall(request).execute().use { response ->
+                        if (response.isSuccessful) {
+                            response.body?.string() ?: "{\"data\": {}}"
+                        } else {
+                            val errorBody = response.body?.string() ?: ""
+                            null
+                        }
+                    }
+                }
 
-                    if (response.isSuccessful) {
-                        val bodyString = response.body?.string() ?: "{\"data\": {}}"
-                        android.util.Log.d("SalesReportAPI", "Response body: $bodyString")
-
-                        val json = JSONObject(bodyString)
+                if (responseData != null) {
+                    try {
+                        val json = JSONObject(responseData)
                         val dataObj = json.optJSONObject("data") ?: JSONObject()
                         val data = mutableListOf<Map<String, Any>>()
 
@@ -7007,19 +7289,19 @@ private fun SalesReportContent(
                         }
                         salesData = data
                         errorMessage = ""
-                    } else {
-                        val errorBody = response.body?.string() ?: ""
-                        errorMessage = "HTTP ${response.code}: ${response.message ?: "Unknown error"}"
-                        android.util.Log.e("SalesReportAPI", "Error: $errorMessage | Body: $errorBody")
+                    } catch (parseError: Exception) {
+                        errorMessage = "Failed to parse response: ${parseError.message}"
                     }
-                    if (isInitialLoad) {
-                        isLoading = false
-                        isInitialLoad = false
-                    }
+                } else {
+                    errorMessage = "Failed to fetch data"
+                }
+
+                if (isInitialLoad) {
+                    isLoading = false
+                    isInitialLoad = false
                 }
             } catch (e: Exception) {
                 errorMessage = "Error: ${e.message ?: "Unknown error loading sales report"}"
-                android.util.Log.e("SalesReportAPI", "Exception", e)
                 if (isInitialLoad) {
                     isLoading = false
                     isInitialLoad = false
@@ -7128,9 +7410,9 @@ private fun SalesReportContent(
                     if (salesData.size > 1) {
                         items(salesData.size - 1) { index ->
                             val sale = salesData[index + 1]
-                            val itemTitle = sale["item_title"].toString()
-                            val buyerEmail = sale["buyer_email"].toString()
-                            val sellerEmail = sale["seller_email"].toString()
+                            val itemTitle = (sale["item_title"] as? String) ?: "Unknown Item"
+                            val buyerEmail = (sale["buyer_email"] as? String) ?: "Unknown Buyer"
+                            val sellerEmail = (sale["seller_email"] as? String) ?: "Unknown Seller"
                             val pointsUsed = sale["points_used"] as? Int ?: 0
 
                             Card(
@@ -7149,7 +7431,7 @@ private fun SalesReportContent(
                                             "$pointsUsed pts used",
                                             style = MaterialTheme.typography.bodySmall,
                                             fontWeight = FontWeight.Bold,
-                                            color = Color.Green
+                                            color = DarkGreen
                                         )
                                     }
                                 }
@@ -7195,23 +7477,28 @@ private fun ProfitReportContent(
                     continue
                 }
 
-                android.util.Log.d("ProfitReportAPI", "Token: ${token.take(10)}...")
 
-                val request = Request.Builder()
-                    .url("https://fati-api.alertaraqc.com/api/admin/reports/profit")
-                    .header("Authorization", "Bearer $token")
-                    .header("Accept", "application/json")
-                    .get()
-                    .build()
+                val responseData = withContext(Dispatchers.IO) {
+                    val request = Request.Builder()
+                        .url("https://fati-api.alertaraqc.com/api/admin/reports/profit")
+                        .header("Authorization", "Bearer $token")
+                        .header("Accept", "application/json")
+                        .get()
+                        .build()
 
-                adminHttpClient.newCall(request).execute().use { response ->
-                    android.util.Log.d("ProfitReportAPI", "Response code: ${response.code}")
+                    adminHttpClient.newCall(request).execute().use { response ->
+                        if (response.isSuccessful) {
+                            response.body?.string() ?: "{\"data\": {}}"
+                        } else {
+                            val errorBody = response.body?.string() ?: ""
+                            null
+                        }
+                    }
+                }
 
-                    if (response.isSuccessful) {
-                        val bodyString = response.body?.string() ?: "{\"data\": {}}"
-                        android.util.Log.d("ProfitReportAPI", "Response body: $bodyString")
-
-                        val json = JSONObject(bodyString)
+                if (responseData != null) {
+                    try {
+                        val json = JSONObject(responseData)
                         val dataObj = json.optJSONObject("data") ?: JSONObject()
 
                         totalMarkupProfit = dataObj.optInt("total_markup_profit", 0)
@@ -7240,19 +7527,19 @@ private fun ProfitReportContent(
                         topProfitableItems = itemsData
 
                         errorMessage = ""
-                    } else {
-                        val errorBody = response.body?.string() ?: ""
-                        errorMessage = "HTTP ${response.code}: ${response.message ?: "Unknown error"}"
-                        android.util.Log.e("ProfitReportAPI", "Error: $errorMessage | Body: $errorBody")
+                    } catch (parseError: Exception) {
+                        errorMessage = "Failed to parse response: ${parseError.message}"
                     }
-                    if (isInitialLoad) {
-                        isLoading = false
-                        isInitialLoad = false
-                    }
+                } else {
+                    errorMessage = "Failed to fetch data"
+                }
+
+                if (isInitialLoad) {
+                    isLoading = false
+                    isInitialLoad = false
                 }
             } catch (e: Exception) {
                 errorMessage = "Error: ${e.message ?: "Unknown error loading profit report"}"
-                android.util.Log.e("ProfitReportAPI", "Exception", e)
                 if (isInitialLoad) {
                     isLoading = false
                     isInitialLoad = false
@@ -7318,8 +7605,8 @@ private fun ProfitReportContent(
                                 modifier = Modifier.fillMaxWidth().padding(16.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
-                                Text("Total Markup Profit", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                                Text("$totalMarkupProfit pts", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = Color.Green)
+                                Text("Total Markup Profit", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("$totalMarkupProfit pts", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = DarkGreen)
                             }
                         }
                     }
@@ -7330,6 +7617,8 @@ private fun ProfitReportContent(
                         }
                         items(profitByMonth.size) { index ->
                             val month = profitByMonth[index]
+                            val monthName = (month["month"] as? String) ?: "Unknown"
+                            val profit = month["profit"] as? Int ?: 0
                             Card(
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(8.dp),
@@ -7340,8 +7629,8 @@ private fun ProfitReportContent(
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text(month["month"].toString(), fontWeight = FontWeight.Bold)
-                                    Text("${month["profit"]} pts", style = MaterialTheme.typography.bodySmall, color = Color.Green, fontWeight = FontWeight.Bold)
+                                    Text(monthName, fontWeight = FontWeight.Bold)
+                                    Text("$profit pts", style = MaterialTheme.typography.bodySmall, color = DarkGreen, fontWeight = FontWeight.Bold)
                                 }
                             }
                         }
@@ -7353,9 +7642,9 @@ private fun ProfitReportContent(
                         }
                         items(topProfitableItems.size) { index ->
                             val item = topProfitableItems[index]
-                            val title = item["title"].toString()
+                            val title = (item["title"] as? String) ?: "Unknown Item"
                             val markupPoints = item["markup_points"] as? Int ?: 0
-                            val sellerEmail = item["seller_email"].toString()
+                            val sellerEmail = (item["seller_email"] as? String) ?: "Unknown Seller"
 
                             Card(
                                 modifier = Modifier.fillMaxWidth(),
@@ -7364,9 +7653,9 @@ private fun ProfitReportContent(
                             ) {
                                 Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
                                     Text(title, fontWeight = FontWeight.Bold)
-                                    Text("Seller: $sellerEmail", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                                    Text("Seller: $sellerEmail", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     Spacer(Modifier.height(4.dp))
-                                    Text("$markupPoints pts", style = MaterialTheme.typography.bodySmall, color = Color.Green, fontWeight = FontWeight.Bold)
+                                    Text("$markupPoints pts", style = MaterialTheme.typography.bodySmall, color = DarkGreen, fontWeight = FontWeight.Bold)
                                 }
                             }
                         }
@@ -7410,23 +7699,28 @@ private fun CategoryReportContent(
                     continue
                 }
 
-                android.util.Log.d("CategoryReportAPI", "Token: ${token.take(10)}...")
 
-                val request = Request.Builder()
-                    .url("https://fati-api.alertaraqc.com/api/admin/reports/categories")
-                    .header("Authorization", "Bearer $token")
-                    .header("Accept", "application/json")
-                    .get()
-                    .build()
+                val responseData = withContext(Dispatchers.IO) {
+                    val request = Request.Builder()
+                        .url("https://fati-api.alertaraqc.com/api/admin/reports/categories")
+                        .header("Authorization", "Bearer $token")
+                        .header("Accept", "application/json")
+                        .get()
+                        .build()
 
-                adminHttpClient.newCall(request).execute().use { response ->
-                    android.util.Log.d("CategoryReportAPI", "Response code: ${response.code}")
+                    adminHttpClient.newCall(request).execute().use { response ->
+                        if (response.isSuccessful) {
+                            response.body?.string() ?: "{\"data\": {}}"
+                        } else {
+                            val errorBody = response.body?.string() ?: ""
+                            null
+                        }
+                    }
+                }
 
-                    if (response.isSuccessful) {
-                        val bodyString = response.body?.string() ?: "{\"data\": {}}"
-                        android.util.Log.d("CategoryReportAPI", "Response body: $bodyString")
-
-                        val json = JSONObject(bodyString)
+                if (responseData != null) {
+                    try {
+                        val json = JSONObject(responseData)
                         val dataObj = json.optJSONObject("data") ?: JSONObject()
 
                         val categorySalesArray = dataObj.optJSONArray("category_sales") ?: JSONArray()
@@ -7448,19 +7742,19 @@ private fun CategoryReportContent(
                         }
 
                         errorMessage = ""
-                    } else {
-                        val errorBody = response.body?.string() ?: ""
-                        errorMessage = "HTTP ${response.code}: ${response.message ?: "Unknown error"}"
-                        android.util.Log.e("CategoryReportAPI", "Error: $errorMessage | Body: $errorBody")
+                    } catch (parseError: Exception) {
+                        errorMessage = "Failed to parse response: ${parseError.message}"
                     }
-                    if (isInitialLoad) {
-                        isLoading = false
-                        isInitialLoad = false
-                    }
+                } else {
+                    errorMessage = "Failed to fetch data"
+                }
+
+                if (isInitialLoad) {
+                    isLoading = false
+                    isInitialLoad = false
                 }
             } catch (e: Exception) {
                 errorMessage = "Error: ${e.message ?: "Unknown error loading category report"}"
-                android.util.Log.e("CategoryReportAPI", "Exception", e)
                 if (isInitialLoad) {
                     isLoading = false
                     isInitialLoad = false
@@ -7542,12 +7836,12 @@ private fun CategoryReportContent(
                         }
                         items(categorySales.size) { index ->
                             val category = categorySales[index]
-                            val categoryName = category["category_name"].toString()
+                            val categoryName = (category["category_name"] as? String) ?: "Unknown Category"
                             val itemsSold = category["items_sold"] as? Int ?: 0
                             val markupProfit = category["total_markup_profit"] as? Int ?: 0
 
                             val performanceColor = when {
-                                itemsSold >= 10 -> Color.Green
+                                itemsSold >= 10 -> DarkGreen
                                 itemsSold >= 5 -> Color(0xFFFFC107)
                                 else -> Color(0xFFFF5252)
                             }
@@ -7577,7 +7871,7 @@ private fun CategoryReportContent(
                                         }
                                     }
                                     Spacer(Modifier.height(8.dp))
-                                    Text("Profit: $markupProfit pts", style = MaterialTheme.typography.bodySmall, color = Color.Green, fontWeight = FontWeight.Bold)
+                                    Text("Profit: $markupProfit pts", style = MaterialTheme.typography.bodySmall, color = DarkGreen, fontWeight = FontWeight.Bold)
                                 }
                             }
                         }
@@ -7602,6 +7896,7 @@ private fun UserReportContent(
     var totalStudents by remember { mutableStateOf(0) }
     var topBuyers by remember { mutableStateOf<List<Map<String, Any>>>(emptyList()) }
     var topSellers by remember { mutableStateOf<List<Map<String, Any>>>(emptyList()) }
+    var userActivityByMonth by remember { mutableStateOf<List<Map<String, Any>>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
     var isInitialLoad by remember { mutableStateOf(true) }
     var errorMessage by remember { mutableStateOf("") }
@@ -7622,23 +7917,28 @@ private fun UserReportContent(
                     continue
                 }
 
-                android.util.Log.d("UserReportAPI", "Token: ${token.take(10)}...")
 
-                val request = Request.Builder()
-                    .url("https://fati-api.alertaraqc.com/api/admin/reports/users")
-                    .header("Authorization", "Bearer $token")
-                    .header("Accept", "application/json")
-                    .get()
-                    .build()
+                val responseData = withContext(Dispatchers.IO) {
+                    val request = Request.Builder()
+                        .url("https://fati-api.alertaraqc.com/api/admin/reports/users")
+                        .header("Authorization", "Bearer $token")
+                        .header("Accept", "application/json")
+                        .get()
+                        .build()
 
-                adminHttpClient.newCall(request).execute().use { response ->
-                    android.util.Log.d("UserReportAPI", "Response code: ${response.code}")
+                    adminHttpClient.newCall(request).execute().use { response ->
+                        if (response.isSuccessful) {
+                            response.body?.string() ?: "{\"data\": {}}"
+                        } else {
+                            val errorBody = response.body?.string() ?: ""
+                            null
+                        }
+                    }
+                }
 
-                    if (response.isSuccessful) {
-                        val bodyString = response.body?.string() ?: "{\"data\": {}}"
-                        android.util.Log.d("UserReportAPI", "Response body: $bodyString")
-
-                        val json = JSONObject(bodyString)
+                if (responseData != null) {
+                    try {
+                        val json = JSONObject(responseData)
                         val data = json.optJSONObject("data") ?: JSONObject()
 
                         activeUsers = data.optInt("active_users", 0)
@@ -7651,7 +7951,7 @@ private fun UserReportContent(
                             buyersData.add(mapOf(
                                 "email" to buyer.optString("email", ""),
                                 "wallet_points" to buyer.optInt("wallet_points", 0),
-                                "transactions_count" to buyer.optInt("transactions_count", 0)
+                                "transactions_count" to buyer.optInt("transactions_as_buyer_count", 0)
                             ))
                         }
                         topBuyers = buyersData
@@ -7663,25 +7963,36 @@ private fun UserReportContent(
                             sellersData.add(mapOf(
                                 "email" to seller.optString("email", ""),
                                 "wallet_points" to seller.optInt("wallet_points", 0),
-                                "transactions_count" to seller.optInt("transactions_count", 0)
+                                "transactions_count" to seller.optInt("transactions_as_seller_count", 0)
                             ))
                         }
                         topSellers = sellersData
 
+                        val activityArray = data.optJSONArray("user_activity_by_month") ?: JSONArray()
+                        val activityData = mutableListOf<Map<String, Any>>()
+                        for (i in 0 until activityArray.length()) {
+                            val activity = activityArray.getJSONObject(i)
+                            activityData.add(mapOf(
+                                "month" to activity.optString("month", ""),
+                                "count" to activity.optInt("count", 0)
+                            ))
+                        }
+                        userActivityByMonth = activityData
+
                         errorMessage = ""
-                    } else {
-                        val errorBody = response.body?.string() ?: ""
-                        errorMessage = "HTTP ${response.code}: ${response.message ?: "Unknown error"}"
-                        android.util.Log.e("UserReportAPI", "Error: $errorMessage | Body: $errorBody")
+                    } catch (parseError: Exception) {
+                        errorMessage = "Failed to parse response: ${parseError.message}"
                     }
-                    if (isInitialLoad) {
-                        isLoading = false
-                        isInitialLoad = false
-                    }
+                } else {
+                    errorMessage = "Failed to fetch data"
+                }
+
+                if (isInitialLoad) {
+                    isLoading = false
+                    isInitialLoad = false
                 }
             } catch (e: Exception) {
                 errorMessage = "Error: ${e.message ?: "Unknown error loading user report"}"
-                android.util.Log.e("UserReportAPI", "Exception", e)
                 if (isInitialLoad) {
                     isLoading = false
                     isInitialLoad = false
@@ -7738,21 +8049,64 @@ private fun UserReportContent(
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     item {
-                        LazyVerticalGrid(columns = GridCells.Fixed(2), modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            items(listOf(
-                                Pair("Active Users", activeUsers.toString()),
-                                Pair("Total Students", totalStudents.toString()),
-                                Pair("Top Buyers", topBuyers.size.toString()),
-                                Pair("Top Sellers", topSellers.size.toString())
-                            )) { (label, value) ->
+                        val statItems = listOf(
+                            Pair("Active Users", activeUsers.toString()),
+                            Pair("Total Students", totalStudents.toString()),
+                            Pair("Top Buyers", topBuyers.size.toString()),
+                            Pair("Top Sellers", topSellers.size.toString())
+                        )
+
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 Card(
-                                    modifier = Modifier.fillMaxWidth(),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxWidth(),
                                     shape = RoundedCornerShape(8.dp),
                                     elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
                                 ) {
                                     Column(modifier = Modifier.fillMaxWidth().padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                                        Text(label, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                                        Text(value, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.headlineSmall)
+                                        Text(statItems[0].first, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(statItems[0].second, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.headlineSmall)
+                                    }
+                                }
+                                Card(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxWidth(),
+                                    shape = RoundedCornerShape(8.dp),
+                                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                                ) {
+                                    Column(modifier = Modifier.fillMaxWidth().padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text(statItems[1].first, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(statItems[1].second, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.headlineSmall)
+                                    }
+                                }
+                            }
+
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Card(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxWidth(),
+                                    shape = RoundedCornerShape(8.dp),
+                                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                                ) {
+                                    Column(modifier = Modifier.fillMaxWidth().padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text(statItems[2].first, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(statItems[2].second, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.headlineSmall)
+                                    }
+                                }
+                                Card(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxWidth(),
+                                    shape = RoundedCornerShape(8.dp),
+                                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                                ) {
+                                    Column(modifier = Modifier.fillMaxWidth().padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text(statItems[3].first, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(statItems[3].second, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.headlineSmall)
                                     }
                                 }
                             }
@@ -7765,7 +8119,7 @@ private fun UserReportContent(
                         }
                         items(topBuyers.size) { index ->
                             val buyer = topBuyers[index]
-                            val email = buyer["email"].toString()
+                            val email = (buyer["email"] as? String) ?: "Unknown User"
                             val points = buyer["wallet_points"] as? Int ?: 0
                             val txnCount = buyer["transactions_count"] as? Int ?: 0
 
@@ -7784,13 +8138,13 @@ private fun UserReportContent(
                                         Text(
                                             "$points pts",
                                             style = MaterialTheme.typography.bodySmall,
-                                            color = Color.Green,
+                                            color = DarkGreen,
                                             fontWeight = FontWeight.Bold
                                         )
                                         Text(
                                             "$txnCount transactions",
                                             style = MaterialTheme.typography.bodySmall,
-                                            color = Color.Gray
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
                                 }
@@ -7804,7 +8158,7 @@ private fun UserReportContent(
                         }
                         items(topSellers.size) { index ->
                             val seller = topSellers[index]
-                            val email = seller["email"].toString()
+                            val email = (seller["email"] as? String) ?: "Unknown User"
                             val points = seller["wallet_points"] as? Int ?: 0
                             val txnCount = seller["transactions_count"] as? Int ?: 0
 
@@ -7823,15 +8177,43 @@ private fun UserReportContent(
                                         Text(
                                             "$points pts",
                                             style = MaterialTheme.typography.bodySmall,
-                                            color = Color.Green,
+                                            color = DarkGreen,
                                             fontWeight = FontWeight.Bold
                                         )
                                         Text(
                                             "$txnCount transactions",
                                             style = MaterialTheme.typography.bodySmall,
-                                            color = Color.Gray
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
+                                }
+                            }
+                        }
+                    }
+
+                    if (userActivityByMonth.isNotEmpty()) {
+                        item {
+                            Text("User Activity by Month", fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.padding(start = 4.dp))
+                        }
+                        items(userActivityByMonth.size) { index ->
+                            val activity = userActivityByMonth[index]
+                            val month = (activity["month"] as? String) ?: "Unknown"
+                            val count = activity["count"] as? Int ?: 0
+
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(8.dp),
+                                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                            ) {
+                                Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
+                                    Text(month, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                    Spacer(Modifier.height(4.dp))
+                                    Text(
+                                        "$count active users",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = DarkGreen,
+                                        fontWeight = FontWeight.Bold
+                                    )
                                 }
                             }
                         }
