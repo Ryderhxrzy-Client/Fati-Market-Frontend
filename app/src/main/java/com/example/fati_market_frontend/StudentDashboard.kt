@@ -210,7 +210,8 @@ fun StudentDashboard(isDarkMode: Boolean, onThemeToggle: () -> Unit, onLogout: (
                             selectedConversation = chatConversation,
                             onSelectConversation = { chatConversation = it },
                             favoritesCount       = favoritedIds.size,
-                            onFavoritesClick     = { showFavorites = true }
+                            onFavoritesClick     = { showFavorites = true },
+                            isAdmin              = false
                         )
                         StudentTab.ADD_ITEM -> StudentAddItemContent(
                             onMenuClick      = { openDrawer() },
