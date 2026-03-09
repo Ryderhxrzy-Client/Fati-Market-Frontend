@@ -183,69 +183,6 @@ private val adminHttpClient = OkHttpClient.Builder()
     .connectionPool(okhttp3.ConnectionPool(5, 5, TimeUnit.MINUTES))
     .build()
 
-// ── Pusher config ──────────────────────────────────────────────────────────────
-// private const val PUSHER_APP_KEY  = "c7e99894a56ad96376f6"
-// private const val PUSHER_CLUSTER  = "ap2"
-// private const val PUSHER_AUTH_URL = "https://fati-api.alertaraqc.com/broadcasting/auth"
-
-// /**
-//  * Authorizer that attaches the user's Bearer token to every Pusher private-channel
-//  * auth request.  Runs on Pusher's internal thread, so blocking I/O is fine here.
-//  */
-// private class BearerTokenAuthorizer(
-//     private val authUrl: String,
-//     private val token: String
-// ) : Authorizer {
-//     override fun authorize(channelName: String, socketId: String): String {
-//         val body = FormBody.Builder()
-//             .add("socket_id", socketId)
-//             .add("channel_name", channelName)
-//             .build()
-//         val request = Request.Builder()
-//             .url(authUrl)
-//             .post(body)
-//             .header("Authorization", "Bearer $token")
-//             .header("Content-Type", "application/x-www-form-urlencoded")
-//             .build()
-//         return adminHttpClient.newCall(request).execute().use { response ->
-//             val rawBody = response.body?.string() ?: ""
-//             // Logcat only — never touch Compose state from a background thread
-//             Log.d("PusherAuth", "HTTP ${response.code} | channel=$channelName | body=$rawBody")
-//
-//             if (!response.isSuccessful) {
-//                 // Must throw AuthorizationFailureException — Pusher 2.4.x only catches this type.
-//                 // A generic Exception escapes uncaught on the background thread and kills the app.
-//                 throw AuthorizationFailureException("HTTP ${response.code}: $rawBody")
-//             }
-//
-//             // Pusher expects {"auth":"appKey:sig"} at the top level.
-//             // If the server wraps it (e.g. {"data":{"auth":...}}) unwrap it.
-//             try {
-//                 val json = JSONObject(rawBody)
-//                 if (json.has("auth")) {
-//                     rawBody
-//                 } else {
-//                     val inner = json.optJSONObject("data")
-//                         ?: json.optJSONObject("result")
-//                         ?: json.optJSONObject("payload")
-//                     if (inner != null && inner.has("auth")) {
-//                         Log.d("PusherAuth", "Unwrapped auth from nested object")
-//                         inner.toString()
-//                     } else {
-//                         Log.e("PusherAuth", "No 'auth' field found. Full response: $rawBody")
-//                         throw AuthorizationFailureException("missing 'auth' field. Server said: $rawBody")
-//                     }
-//                 }
-//             } catch (e: AuthorizationFailureException) {
-//                 throw e  // already correct type, re-throw directly
-//             } catch (e: Exception) {
-//                 Log.e("PusherAuth", "Auth response error: $rawBody", e)
-//                 throw AuthorizationFailureException(e.message ?: "parse error")
-//             }
-//         }
-//     }
-// }
-
 private fun fetchStudents(token: String, status: String? = null): List<Student> {
     val url = if (status != null)
         "https://fati-api.alertaraqc.com/api/admin/students?status=$status"
@@ -2512,6 +2449,7 @@ data class Conversation(
     val itemId: Int,
     val itemTitle: String,
     val itemStatus: String = "",
+    val itemPhoto: String = "",
     val latestMessage: String,
     val lastMessageAt: String,
     val messageCount: Int,
@@ -2577,6 +2515,7 @@ private fun fetchConversations(token: String): List<Conversation> {
                     itemId           = itemId,
                     itemTitle        = obj.optString("item_title").ifBlank { obj.optString("title") },
                     itemStatus       = obj.optString("item_status").ifBlank { obj.optString("status") },
+                    itemPhoto        = obj.optString("item_photo"),
                     latestMessage    = obj.optString("latest_message").ifBlank { obj.optString("last_message") },
                     lastMessageAt    = obj.optString("last_message_at").ifBlank { obj.optString("updated_at") },
                     messageCount     = obj.optInt("message_count"),
@@ -3149,11 +3088,13 @@ private fun ConversationItem(conversation: Conversation, onClick: () -> Unit, is
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Avatar
-        Box(modifier = Modifier.size(56.dp)) {
+        // Avatar with item photo - overlapping circles (like messenger group chat)
+        Box(modifier = Modifier.size(64.dp)) {
+            // Profile picture - top left
             Box(
                 modifier = Modifier
-                    .fillMaxSize()
+                    .size(48.dp)
+                    .align(Alignment.TopStart)
                     .clip(CircleShape)
                     .background(DarkGreen.copy(alpha = 0.13f)),
                 contentAlignment = Alignment.Center
@@ -3162,19 +3103,57 @@ private fun ConversationItem(conversation: Conversation, onClick: () -> Unit, is
                     SubcomposeAsyncImage(
                         model = conversation.profilePicture,
                         contentDescription = null,
-                        modifier = Modifier.fillMaxSize().clip(CircleShape),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clip(CircleShape),
                         contentScale = ContentScale.Crop,
                         error = {
                             Text(
                                 "${conversation.firstName.firstOrNull() ?: "?"}",
-                                fontSize = 22.sp, fontWeight = FontWeight.Bold, color = DarkGreen
+                                fontSize = 18.sp, fontWeight = FontWeight.Bold, color = DarkGreen
                             )
                         }
                     )
                 } else {
                     Text(
                         "${conversation.firstName.firstOrNull() ?: "?"}",
-                        fontSize = 22.sp, fontWeight = FontWeight.Bold, color = DarkGreen
+                        fontSize = 18.sp, fontWeight = FontWeight.Bold, color = DarkGreen
+                    )
+                }
+            }
+
+            // Item photo - bottom right, overlapping
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .align(Alignment.BottomEnd)
+                    .clip(CircleShape)
+                    .background(DarkGreen.copy(alpha = 0.13f)),
+                contentAlignment = Alignment.Center
+            ) {
+                if (conversation.itemPhoto.isNotBlank()) {
+                    SubcomposeAsyncImage(
+                        model = conversation.itemPhoto,
+                        contentDescription = "Item photo",
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clip(CircleShape),
+                        contentScale = ContentScale.Crop,
+                        error = {
+                            Icon(
+                                Icons.Filled.Image,
+                                null,
+                                modifier = Modifier.size(18.dp),
+                                tint = DarkGreen
+                            )
+                        }
+                    )
+                } else {
+                    Icon(
+                        Icons.Filled.Image,
+                        null,
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                     )
                 }
             }
@@ -3235,8 +3214,8 @@ private fun ConversationItem(conversation: Conversation, onClick: () -> Unit, is
                     ) {
                         Text(
                             if (conversation.unreadCount > 99) "99+" else "${conversation.unreadCount}",
-                            fontSize = 9.sp,
-                            lineHeight = 9.sp,
+                            fontSize = 7.sp,
+                            lineHeight = 7.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color.White,
                             textAlign = TextAlign.Center
@@ -3244,14 +3223,29 @@ private fun ConversationItem(conversation: Conversation, onClick: () -> Unit, is
                     }
                 }
 
-                // Status + Category badge (show in both admin and student view)
+                // Status badge (different for admin and student)
                 val statusText = conversation.itemStatus.ifBlank { "Unknown" }
                 val statusLower = statusText.lowercase()
-                val isBuyer = statusLower == "public" || statusLower == "reserved" || statusLower == "sold"
-                val categoryLabel = if (isBuyer) "Student Buyer" else "Student Seller"
-                val statusDisplay = statusText.replaceFirstChar { it.uppercaseChar() }
-                val badgeText = "$statusDisplay - $categoryLabel"
-                val badgeColor = if (isBuyer) Color(0xFF2196F3) else Color(0xFF4CAF50) // Blue for Buyer, Green for Seller
+
+                val (badgeText, badgeColor) = if (isAdmin) {
+                    // Admin view: "Status - Category"
+                    val isBuyer = statusLower == "public" || statusLower == "reserved" || statusLower == "sold"
+                    val categoryLabel = if (isBuyer) "Student Buyer" else "Student Seller"
+                    val statusDisplay = statusText.replaceFirstChar { it.uppercaseChar() }
+                    val text = "$statusDisplay - $categoryLabel"
+                    val color = if (isBuyer) Color(0xFF2196F3) else Color(0xFF4CAF50)
+                    text to color
+                } else {
+                    // Student view: simple status labels
+                    val (text, color) = when (statusLower) {
+                        "private", "acquired" -> "Negotiating" to Color(0xFFFF9800) // Orange
+                        "public" -> "Item Available" to Color(0xFF4CAF50) // Green
+                        "reserved" -> "Item Reserved" to Color(0xFFFF9800) // Orange
+                        "sold" -> "Item Sold" to Color(0xFFE53935) // Red
+                        else -> "Unknown" to Color(0xFF999999)
+                    }
+                    text to color
+                }
 
                 Surface(
                     shape = RoundedCornerShape(4.dp),
@@ -3977,7 +3971,6 @@ private fun ChatDetailContent(
                         }
                     }
 
-                    // ─────────────────────────────────────────────────────────
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
