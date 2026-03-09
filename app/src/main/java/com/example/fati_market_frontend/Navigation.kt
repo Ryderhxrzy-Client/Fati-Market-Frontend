@@ -8,6 +8,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.example.fati_market_frontend.auth.ForgotPasswordScreen
+import com.example.fati_market_frontend.auth.LoginScreen
+import com.example.fati_market_frontend.auth.SignUpScreen
 
 private const val SESSION_DURATION_MS = 2L * 60 * 60 * 1000  // 2 hours
 
