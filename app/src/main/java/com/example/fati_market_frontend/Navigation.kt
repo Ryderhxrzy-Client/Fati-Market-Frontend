@@ -54,7 +54,18 @@ fun AppNavigation(isDarkMode: Boolean, onThemeToggle: () -> Unit) {
                 isDarkMode = isDarkMode,
                 onThemeToggle = onThemeToggle,
                 onLogout = {
-                    context.getSharedPreferences("fatimarket_prefs", 0).edit().clear().apply()
+                    val prefs = context.getSharedPreferences("fatimarket_prefs", 0)
+                    val token = prefs.getString("auth_token", "") ?: ""
+
+                    // Call logout API in background
+                    if (token.isNotBlank()) {
+                        Thread {
+                            performLogout(token)
+                        }.start()
+                    }
+
+                    // Clear preferences and navigate to login
+                    prefs.edit().clear().apply()
                     navController.navigate("login") {
                         popUpTo(0) { inclusive = true }
                     }
@@ -66,7 +77,18 @@ fun AppNavigation(isDarkMode: Boolean, onThemeToggle: () -> Unit) {
                 isDarkMode = isDarkMode,
                 onThemeToggle = onThemeToggle,
                 onLogout = {
-                    context.getSharedPreferences("fatimarket_prefs", 0).edit().clear().apply()
+                    val prefs = context.getSharedPreferences("fatimarket_prefs", 0)
+                    val token = prefs.getString("auth_token", "") ?: ""
+
+                    // Call logout API in background
+                    if (token.isNotBlank()) {
+                        Thread {
+                            performLogout(token)
+                        }.start()
+                    }
+
+                    // Clear preferences and navigate to login
+                    prefs.edit().clear().apply()
                     navController.navigate("login") {
                         popUpTo(0) { inclusive = true }
                     }
