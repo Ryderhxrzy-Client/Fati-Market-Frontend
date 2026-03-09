@@ -3244,28 +3244,26 @@ private fun ConversationItem(conversation: Conversation, onClick: () -> Unit, is
                     }
                 }
 
-                // Status + Category badge (only show in admin view)
-                if (isAdmin) {
-                    val statusText = conversation.itemStatus.ifBlank { "Unknown" }
-                    val statusLower = statusText.lowercase()
-                    val isBuyer = statusLower == "public" || statusLower == "reserved" || statusLower == "sold"
-                    val categoryLabel = if (isBuyer) "Student Buyer" else "Student Seller"
-                    val statusDisplay = statusText.replaceFirstChar { it.uppercaseChar() }
-                    val badgeText = "$statusDisplay - $categoryLabel"
-                    val badgeColor = if (isBuyer) Color(0xFF2196F3) else Color(0xFF4CAF50) // Blue for Buyer, Green for Seller
+                // Status + Category badge (show in both admin and student view)
+                val statusText = conversation.itemStatus.ifBlank { "Unknown" }
+                val statusLower = statusText.lowercase()
+                val isBuyer = statusLower == "public" || statusLower == "reserved" || statusLower == "sold"
+                val categoryLabel = if (isBuyer) "Student Buyer" else "Student Seller"
+                val statusDisplay = statusText.replaceFirstChar { it.uppercaseChar() }
+                val badgeText = "$statusDisplay - $categoryLabel"
+                val badgeColor = if (isBuyer) Color(0xFF2196F3) else Color(0xFF4CAF50) // Blue for Buyer, Green for Seller
 
-                    Surface(
-                        shape = RoundedCornerShape(4.dp),
-                        color = badgeColor.copy(alpha = 0.12f)
-                    ) {
-                        Text(
-                            badgeText,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = badgeColor,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                        )
-                    }
+                Surface(
+                    shape = RoundedCornerShape(4.dp),
+                    color = badgeColor.copy(alpha = 0.12f)
+                ) {
+                    Text(
+                        badgeText,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = badgeColor,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
                 }
             }
             // Row 3: latest message
@@ -3788,8 +3786,8 @@ private fun ChatDetailContent(
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            // Edit Item button (visible only if user is seller and status is private, acquired, or public)
-                            val canEditItem = currentUserId == item.sellerId && (
+                            // Edit Item button (visible only in admin view, user is seller, and status is private, acquired, or public)
+                            val canEditItem = isAdmin && currentUserId == item.sellerId && (
                                 item.status.lowercase() == "private" ||
                                 item.status.lowercase() == "acquired" ||
                                 item.status.lowercase() == "public"
