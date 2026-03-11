@@ -1,3 +1,4 @@
+/*
 package com.example.fati_market_frontend
 
 import android.net.Uri
@@ -3295,4 +3296,4 @@ private fun StudentProfileNavItem(
             modifier   = Modifier.padding(top = 2.dp)
         )
     }
-}
+} */

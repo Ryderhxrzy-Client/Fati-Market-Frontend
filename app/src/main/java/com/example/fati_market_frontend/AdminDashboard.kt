@@ -634,6 +634,7 @@ private fun AdminDrawerContent(
             }
         }
 
+/*
         DrawerSectionHeader(Icons.Filled.Receipt, "Transactions", transactionsExpanded) { transactionsExpanded = !transactionsExpanded }
         AnimatedVisibility(visible = transactionsExpanded) {
             Column {
@@ -646,6 +647,9 @@ private fun AdminDrawerContent(
             }
         }
 
+*/
+
+/*
         DrawerSectionHeader(Icons.Filled.BarChart, "Reports / Analytics", reportsExpanded) { reportsExpanded = !reportsExpanded }
         AnimatedVisibility(visible = reportsExpanded) {
             Column {
@@ -656,6 +660,8 @@ private fun AdminDrawerContent(
                 DrawerSubItem("Active Users",               currentPage == DrawerPage.ActiveUsers)       { onPageSelect(DrawerPage.ActiveUsers) }
             }
         }
+
+*/
 
         HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             color = MaterialTheme.colorScheme.outlineVariant)
@@ -800,6 +806,7 @@ private fun DrawerPageContent(
             onNavigateToPage      = onNavigateToPage,
             onShowBottomBarChange = onShowBottomBarChange
         )
+/*
         DrawerPage.PointsGiven -> PointsTransactionContent(title = "Points Given", endpoint = "/api/points/given", onMenuClick = onMenuClick, onGoToChat = onGoToChat, onNavigateToPage = onNavigateToPage, onShowBottomBarChange = onShowBottomBarChange)
         DrawerPage.PointsReceived -> PointsTransactionContent(title = "Points Received", endpoint = "/api/points/received", onMenuClick = onMenuClick, onGoToChat = onGoToChat, onNavigateToPage = onNavigateToPage, onShowBottomBarChange = onShowBottomBarChange)
         DrawerPage.CashTransactions -> TransactionsContent(title = "Cash Transactions", endpoint = "/api/admin/transactions/cash", onMenuClick = onMenuClick, onGoToChat = onGoToChat, onNavigateToPage = onNavigateToPage, onShowBottomBarChange = onShowBottomBarChange)
@@ -811,6 +818,8 @@ private fun DrawerPageContent(
         DrawerPage.TotalProfit -> ProfitReportContent(onMenuClick = onMenuClick, onGoToChat = onGoToChat, onNavigateToPage = onNavigateToPage, onShowBottomBarChange = onShowBottomBarChange)
         DrawerPage.MostSoldCategory -> CategoryReportContent(onMenuClick = onMenuClick, onGoToChat = onGoToChat, onNavigateToPage = onNavigateToPage, onShowBottomBarChange = onShowBottomBarChange)
         DrawerPage.ActiveUsers -> UserReportContent(onMenuClick = onMenuClick, onGoToChat = onGoToChat, onNavigateToPage = onNavigateToPage, onShowBottomBarChange = onShowBottomBarChange)
+
+*/
         else -> Column(modifier = Modifier.fillMaxSize()) {
             AdminPageHeader(title = page.label, onMenuClick = onMenuClick)
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -6615,6 +6624,7 @@ private fun updateAdminItem(token: String, itemId: Int, status: String? = null, 
     }
 }
 
+/*
 @Composable
 private fun PointsTransactionContent(
     title: String,
@@ -8216,3 +8226,4 @@ private fun UserReportContent(
         }
     }
 }
+*/
