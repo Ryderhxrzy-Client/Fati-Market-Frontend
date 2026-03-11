@@ -125,6 +125,7 @@ private sealed class DrawerPage(val label: String) {
     object PublicListings    : DrawerPage("Public Listings")
     object ReservedItems     : DrawerPage("Reserved Items")
     object SoldItems         : DrawerPage("Sold Items")
+/*
     object PointsGiven       : DrawerPage("Points Given")
     object PointsReceived    : DrawerPage("Points Received")
     object CashTransactions  : DrawerPage("Cash Transactions")
@@ -136,6 +137,7 @@ private sealed class DrawerPage(val label: String) {
     object TotalProfit       : DrawerPage("Total Profit (from markup)")
     object MostSoldCategory  : DrawerPage("Most Sold Category")
     object ActiveUsers       : DrawerPage("Active Users")
+*/
     object Categories        : DrawerPage("Categories")
     object ActivityLogs      : DrawerPage("Activity Logs")
 }
@@ -529,8 +531,8 @@ private fun AdminDrawerContent(
 
     var showLogoutDialog     by remember { mutableStateOf(false) }
     var inventoryExpanded    by remember { mutableStateOf(false) }
-    var transactionsExpanded by remember { mutableStateOf(false) }
-    var reportsExpanded      by remember { mutableStateOf(false) }
+//    var transactionsExpanded by remember { mutableStateOf(false) }
+//    var reportsExpanded      by remember { mutableStateOf(false) }
 
     // ── Logout confirmation dialog ────────────────────────────────────────────
     if (showLogoutDialog) {
@@ -559,12 +561,14 @@ private fun AdminDrawerContent(
             is DrawerPage.PrivateOffers, is DrawerPage.AcquiredItems,
             is DrawerPage.PublicListings, is DrawerPage.ReservedItems,
             is DrawerPage.SoldItems -> inventoryExpanded = true
+/*
             is DrawerPage.PointsGiven, is DrawerPage.PointsReceived,
             is DrawerPage.CashTransactions, is DrawerPage.TradeTransactions,
             is DrawerPage.TransactionHistory, is DrawerPage.ProfitSummary -> transactionsExpanded = true
             is DrawerPage.TotalItemAcquired, is DrawerPage.TotalItemSold,
             is DrawerPage.TotalProfit, is DrawerPage.MostSoldCategory,
             is DrawerPage.ActiveUsers -> reportsExpanded = true
+*/
             else -> {}
         }
     }
